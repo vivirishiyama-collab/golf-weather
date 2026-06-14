@@ -59,14 +59,13 @@ def get_weather_code_label(code):
     return WEATHER_CODE.get(int(code) if not np.isnan(code) else 0, f"コード{int(code)}")
 
 # ---- ゴルフ場名候補をNominatimで検索 ----
-@st.cache_data(ttl=3600, show_spinner=False)
-def search_golf_courses(keyword: str):
-    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す"""
+def _nominatim_search(query: str) -> list:
+    """Nominatim に1クエリ投げてゴルフ場リストを返す"""
     try:
         r = requests.get(
             "https://nominatim.openstreetmap.org/search",
             params={
-                "q": keyword,
+                "q": query,
                 "format": "jsonv2",
                 "limit": 30,
                 "extratags": 1,
@@ -76,21 +75,63 @@ def search_golf_courses(keyword: str):
             timeout=15,
         )
         r.raise_for_status()
-        data = r.json()
+        return r.json()
     except Exception:
         return []
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def search_golf_courses(keyword: str):
+    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。
+    日英両方のクエリを投げて結果をマージする。"""
+
+    # 日英複数クエリ（「ゴルフ場」「ゴルフクラブ」「golf course」「golf club」を付与）
+    queries = [
+        f"{keyword} ゴルフ場",
+        f"{keyword} ゴルフクラブ",
+        f"{keyword} golf course",
+        f"{keyword} golf club",
+        keyword,
+    ]
+
+    raw = []
+    seen_queries = set()
+    for q in queries:
+        if q in seen_queries:
+            continue
+        seen_queries.add(q)
+        raw.extend(_nominatim_search(q))
+        time.sleep(0.3)  # Nominatim利用規約：1req/秒以下
+
     results = []
-    seen = set()
-    for item in data:
-        # golf_courseタイプに絞り込み
-        if item.get("type") not in ("golf_course", "golf") and \
-           (item.get("extratags") or {}).get("leisure") != "golf_course":
+    seen_names = set()
+    seen_coords = set()
+    for item in raw:
+        # golf_courseタイプ、またはdisplay_nameに"golf"を含むものに絞り込み
+        item_type = item.get("type", "")
+        display = item.get("display_name", "").lower()
+        et = item.get("extratags") or {}
+        is_golf = (
+            item_type in ("golf_course", "golf")
+            or et.get("leisure") == "golf_course"
+            or ("golf" in display and item_type in ("", "yes", "leisure", "club"))
+        )
+        if not is_golf:
             continue
-        name = item.get("name") or item.get("display_name", "").split(",")[0]
-        if not name or name in seen:
+
+        name = item.get("name") or display.split(",")[0]
+        if not name or name in seen_names:
             continue
-        seen.add(name)
+
+        # 座標が近すぎる重複を除外（同一施設の別ノード）
+        lat_r = round(float(item["lat"]), 3)
+        lon_r = round(float(item["lon"]), 3)
+        coord_key = (lat_r, lon_r)
+        if coord_key in seen_coords:
+            continue
+
+        seen_names.add(name)
+        seen_coords.add(coord_key)
+
         addr_obj = item.get("address", {})
         addr_parts = [
             addr_obj.get("country", ""),
