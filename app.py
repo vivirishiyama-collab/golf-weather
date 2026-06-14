@@ -650,7 +650,7 @@ if forecast_btn and lat:
             cells = []
             for i, (c, v) in enumerate(r.items()):
                 if i == 0:  # 時刻列を横スクロール時に固定
-                    cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd;position:sticky;left:0;background:#ffffff;z-index:1;font-weight:bold;border-right:2px solid #ccc">{v}</td>')
+                    cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd;position:sticky;left:0;background:#ffffff;color:#111111;z-index:1;font-weight:bold;border-right:2px solid #ccc">{v}</td>')
                 elif c != "コメント":
                     cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd">{v}</td>')
                 else:
