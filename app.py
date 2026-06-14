@@ -650,7 +650,7 @@ if forecast_btn and lat:
             cells = []
             for i, (c, v) in enumerate(r.items()):
                 if i == 0:  # 時刻列を横スクロール時に固定
-                    cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd;position:sticky;left:0;background:inherit;z-index:1;font-weight:bold">{v}</td>')
+                    cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd;position:sticky;left:0;background:#ffffff;z-index:1;font-weight:bold;border-right:2px solid #ccc">{v}</td>')
                 elif c != "コメント":
                     cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd">{v}</td>')
                 else:
@@ -660,7 +660,7 @@ if forecast_btn and lat:
         header_cells = []
         for i, c in enumerate(cols_show):
             if i == 0:  # 時刻ヘッダーも固定
-                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;left:0;z-index:3">{c}</th>')
+                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;left:0;z-index:3;border-right:2px solid #ccc">{c}</th>')
             else:
                 header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap">{c}</th>')
         header_html = "".join(header_cells)
