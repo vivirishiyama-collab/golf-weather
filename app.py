@@ -296,23 +296,31 @@ def build_ensemble_df(lat, lon, models_to_use, use_weighted=True):
     ]
 
     combined = pd.concat(all_dfs, ignore_index=True)
+    combined["weight"] = combined["weight"].fillna(1.0)
 
-    # 加重平均
-    def weighted_mean(group):
-        row = {}
-        w = group["weight"]
+    # 時刻ごとに加重平均
+    times = combined["time"].unique()
+    rows = []
+    for t in times:
+        grp = combined[combined["time"] == t]
+        w = grp["weight"].values
+        row = {"time": t}
         for col in numeric_cols:
-            if col in group.columns:
-                valid = group[col].notna()
-                if valid.any():
-                    row[col] = (group.loc[valid, col] * w[valid]).sum() / w[valid].sum()
-                else:
-                    row[col] = np.nan
-        if "weathercode" in group.columns:
-            row["weathercode"] = group["weathercode"].mode().iloc[0] if not group["weathercode"].mode().empty else 0
-        return pd.Series(row)
+            if col not in grp.columns:
+                continue
+            vals = grp[col].values.astype(float)
+            valid = ~np.isnan(vals)
+            if valid.any():
+                row[col] = float(np.average(vals[valid], weights=w[valid]))
+            else:
+                row[col] = np.nan
+        # weathercodeは最多数決
+        if "weathercode" in grp.columns:
+            wc = grp["weathercode"].dropna()
+            row["weathercode"] = float(wc.mode().iloc[0]) if not wc.empty else 0.0
+        rows.append(row)
 
-    ensemble_df = combined.groupby("time").apply(weighted_mean, include_groups=False).reset_index()
+    ensemble_df = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
 
     std_df = combined.groupby("time")[["temperature_2m", "precipitation"]].std().reset_index()
     std_df.columns = ["time", "temp_std", "precip_std"]
@@ -450,14 +458,17 @@ if forecast_btn and lat:
         display_df = df_day[["time", "temperature_2m", "apparent_temperature",
                                "precipitation_probability", "precipitation",
                                "windspeed_10m", "cloudcover", "weathercode"]].copy()
+        def to_int_safe(s):
+            return s.fillna(0).round(0).astype(int)
+
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
-        display_df["天気"] = display_df["weathercode"].apply(get_weather_code_label)
+        display_df["天気"] = display_df["weathercode"].fillna(0).apply(get_weather_code_label)
         display_df["気温(°C)"] = display_df["temperature_2m"].round(1)
         display_df["体感気温(°C)"] = display_df["apparent_temperature"].round(1)
-        display_df["降水確率(%)"] = display_df["precipitation_probability"].round(0).astype(int)
-        display_df["降水量(mm)"] = display_df["precipitation"].round(1)
+        display_df["降水確率(%)"] = to_int_safe(display_df["precipitation_probability"])
+        display_df["降水量(mm)"] = display_df["precipitation"].fillna(0).round(1)
         display_df["風速(m/s)"] = display_df["windspeed_10m"].round(1)
-        display_df["雲量(%)"] = display_df["cloudcover"].round(0).astype(int) if "cloudcover" in display_df else "-"
+        display_df["雲量(%)"] = to_int_safe(display_df["cloudcover"]) if "cloudcover" in display_df.columns else "-"
 
         st.dataframe(
             display_df[["時刻", "天気", "気温(°C)", "体感気温(°C)",
@@ -583,7 +594,7 @@ if forecast_btn and lat:
     today_df = ensemble_df[ensemble_df["time"].dt.date == today].copy()
     today_df["ゴルフ適性"] = today_df.apply(golf_score, axis=1)
     today_df["時刻"] = today_df["time"].dt.strftime("%H:%M")
-    today_df["スコア"] = today_df["ゴルフ適性"].round(0).astype(int)
+    today_df["スコア"] = today_df["ゴルフ適性"].fillna(0).round(0).astype(int)
     today_df["評価"] = today_df["スコア"].apply(
         lambda s: "🟢 最高" if s >= 80 else ("🟡 良好" if s >= 60 else ("🟠 注意" if s >= 40 else "🔴 困難"))
     )
