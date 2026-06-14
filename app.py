@@ -591,7 +591,21 @@ if st.session_state.candidates:
     forecast_btn = st.button("⛅ この場所の予報を取得", type="primary")
 
 elif keyword and len(keyword) >= 2 and "last_keyword" in st.session_state:
-    st.warning("ゴルフ場が見つかりませんでした。別のキーワードをお試しください（例: 英語名、省略なしの正式名称）。")
+    st.warning("ゴルフ場が見つかりませんでした。正式名称（例：〇〇ゴルフ倶楽部、〇〇カントリークラブ）で再検索するか、下の座標入力をお使いください。")
+    with st.expander("📍 緯度・経度を直接入力（Google マップで調べた座標を貼り付け）"):
+        _c1, _c2, _c3 = st.columns([2, 2, 3])
+        with _c1:
+            _manual_lat = st.number_input("緯度", value=35.0, format="%.6f", key="manual_lat")
+        with _c2:
+            _manual_lon = st.number_input("経度", value=135.0, format="%.6f", key="manual_lon")
+        with _c3:
+            _manual_name = st.text_input("ゴルフ場名（任意）", value=keyword, key="manual_name")
+        if st.button("⛅ この座標で予報を取得", type="primary", key="manual_btn"):
+            lat = _manual_lat
+            lon = _manual_lon
+            course_name = _manual_name
+            address = f"緯度 {_manual_lat:.4f} / 経度 {_manual_lon:.4f}"
+            forecast_btn = True
 
 # モデル選択
 with st.expander("⚙️ 使用する気象モデルを選択（デフォルト: 全8モデル）"):
