@@ -203,46 +203,11 @@ def _parse_overpass_elements(elements: list, seen_names: set, seen_coords: set) 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def search_golf_courses(keyword: str):
-    """ゴルフ場名でOSM検索。結果が少ない場合はNominatimで補完。"""
-
+    """ゴルフ場名でOverpass検索のみ。地域名はUIレイヤーで処理。"""
     seen_names = set()
     seen_coords = set()
-
-    # Overpass APIでゴルフ場名を部分一致検索
     elements = _overpass_search(keyword)
     results = _parse_overpass_elements(elements, seen_names, seen_coords)
-
-    # 結果が少ない場合のみNominatimで補完（1クエリのみ）
-    if len(results) < 3:
-        for item in _nominatim_search(f"{keyword} ゴルフ"):
-            item_type = item.get("type", "")
-            et = item.get("extratags") or {}
-            display = item.get("display_name", "").lower()
-            is_golf = (
-                item_type in ("golf_course", "golf")
-                or et.get("leisure") == "golf_course"
-                or "golf" in display
-            )
-            if not is_golf:
-                continue
-            name = item.get("name") or display.split(",")[0]
-            if not name or name in seen_names:
-                continue
-            lat_r = round(float(item["lat"]), 3)
-            lon_r = round(float(item["lon"]), 3)
-            if (lat_r, lon_r) in seen_coords:
-                continue
-            seen_names.add(name)
-            seen_coords.add((lat_r, lon_r))
-            addr_obj = item.get("address", {})
-            addr_parts = [
-                addr_obj.get("state", "") or addr_obj.get("province", ""),
-                addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
-            ]
-            results.append({"name": name, "lat": float(item["lat"]),
-                             "lon": float(item["lon"]),
-                             "address": " ".join(p for p in addr_parts if p) or "住所不明"})
-
     results.sort(key=lambda x: x["name"])
     return results
 
