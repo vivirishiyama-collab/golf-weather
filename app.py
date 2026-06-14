@@ -355,20 +355,6 @@ def generate_hourly_comment(row) -> str:
 
     parts = []
 
-    # 時間帯の挨拶
-    if hour < 6:
-        parts.append("夜明け前のスタート")
-    elif hour < 9:
-        parts.append("朝の爽やかな時間帯")
-    elif hour < 12:
-        parts.append("午前のプレーに最適な時間")
-    elif hour < 14:
-        parts.append("日差しが最も強い昼時")
-    elif hour < 17:
-        parts.append("午後の時間帯")
-    else:
-        parts.append("夕方のラウンド")
-
     # 気温コメント
     if not np.isnan(temp):
         if temp >= 35:
