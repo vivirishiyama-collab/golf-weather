@@ -162,13 +162,21 @@ def _nominatim_search(query: str) -> list:
     except Exception:
         return []
 
+_INDOOR_KEYWORDS = ("練習場", "打ちっぱなし", "打ちっ放し", "インドア", "indoor", "driving range", "センター")
+
 def _parse_overpass_elements(elements: list, seen_names: set, seen_coords: set) -> list:
-    """Overpassのelementsリストをゴルフ場dictリストに変換"""
+    """Overpassのelementsリストをゴルフ場dictリストに変換（屋内・練習場を除外）"""
     results = []
     for el in elements:
         tags = el.get("tags", {})
         name = tags.get("name") or tags.get("name:ja") or tags.get("name:en")
         if not name or name in seen_names:
+            continue
+        # 屋内施設・打ちっぱなし練習場を除外
+        if tags.get("indoor") == "yes" or tags.get("building"):
+            continue
+        name_lower = name.lower()
+        if any(kw in name_lower for kw in _INDOOR_KEYWORDS):
             continue
         lat = el.get("lat") or (el.get("center", {}).get("lat"))
         lon = el.get("lon") or (el.get("center", {}).get("lon"))
