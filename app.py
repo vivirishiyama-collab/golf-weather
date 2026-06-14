@@ -689,10 +689,12 @@ if forecast_btn and lat:
         display_df["風速(m/s)"] = display_df["windspeed_10m"].round(1)
         display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
 
+        row_count = len(display_df)
         st.dataframe(
             display_df[["時刻", "天気", "気温(°C)", "降水確率(%)", "降水量(mm)", "風速(m/s)", "コメント"]],
             use_container_width=True,
             hide_index=True,
+            height=35 * row_count + 38,  # 全行を1画面に表示
             column_config={"コメント": st.column_config.TextColumn(width="large")},
         )
 
