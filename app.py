@@ -258,6 +258,90 @@ def compute_model_weights(lat, lon, models_to_use: tuple):
     total = sum(weights.values())
     return {k: v / total * len(weights) for k, v in weights.items()}
 
+# ---- 的中率・精度メトリクスを計算 ----
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_accuracy_metrics(lat, lon, models_to_use: tuple):
+    """過去7日間の予報 vs 実測を比較して的中率を返す"""
+    today = datetime.now().date()
+    start = (today - timedelta(days=8)).isoformat()
+    end   = (today - timedelta(days=1)).isoformat()
+
+    actual_df = fetch_actual_weather(lat, lon, start, end)
+    if actual_df is None or actual_df.empty:
+        return None
+
+    def fetch_hist(model_id):
+        try:
+            r = requests.get(
+                "https://historical-forecast-api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": lat, "longitude": lon,
+                    "start_date": start, "end_date": end,
+                    "hourly": ["temperature_2m", "precipitation", "precipitation_probability"],
+                    "models": model_id,
+                    "timezone": "auto",
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+            df = pd.DataFrame(r.json()["hourly"])
+            df["time"] = pd.to_datetime(df["time"])
+            return df
+        except Exception:
+            return None
+
+    # 全モデルを並列取得
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_hist, mid): name for name, mid in dict(models_to_use).items()}
+        model_results = {}
+        for f in as_completed(futures):
+            name = futures[f]
+            df = f.result()
+            if df is not None:
+                model_results[name] = df
+
+    if not model_results:
+        return None
+
+    # アンサンブル予報（単純平均）を作成
+    pred_dfs = []
+    for df in model_results.values():
+        pred_dfs.append(df.set_index("time"))
+    ensemble_pred = pd.concat(pred_dfs).groupby(level=0).mean()
+
+    merged = actual_df.set_index("time").join(ensemble_pred, lsuffix="_act", rsuffix="_pred").dropna()
+    if merged.empty:
+        return None
+
+    # 気温MAE → 的中率換算（許容誤差±2°C以内を「当たり」）
+    temp_err = (merged["temperature_2m_act"] - merged["temperature_2m_pred"]).abs()
+    temp_mae  = float(temp_err.mean())
+    temp_hit  = float((temp_err <= 2.0).mean() * 100)  # ±2°C以内の割合
+
+    # 降水的中率（予測50%以上 → 雨予報、実測0.5mm以上 → 雨）
+    if "precipitation_probability_pred" in merged.columns and "precipitation_act" in merged.columns:
+        pred_rain = merged["precipitation_probability_pred"] >= 50
+        act_rain  = merged["precipitation_act"] >= 0.5
+        precip_hit = float((pred_rain == act_rain).mean() * 100)
+    else:
+        precip_hit = None
+
+    # 総合スコア（気温的中70% + 降水30%）
+    if precip_hit is not None:
+        overall = temp_hit * 0.7 + precip_hit * 0.3
+    else:
+        overall = temp_hit
+
+    return {
+        "temp_mae": temp_mae,
+        "temp_hit": temp_hit,
+        "precip_hit": precip_hit,
+        "overall": overall,
+        "days": 7,
+        "hours": len(merged),
+    }
+
+
 # ---- 時間帯別ゴルフコメント生成 ----
 def generate_hourly_comment(row) -> str:
     hour = row["time"].hour
@@ -496,12 +580,36 @@ if not selected_models:
 if forecast_btn and lat:
     st.success(f"📍 **{course_name}**  |  {address}  |  緯度 {lat:.4f} / 経度 {lon:.4f}")
 
-    # --- アンサンブル取得（加重） ---
+    # --- 的中率 & アンサンブル取得を並列実行 ---
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        acc_future = ex.submit(compute_accuracy_metrics, lat, lon, tuple(selected_models.items()))
+        # アンサンブルはメインスレッドでStreamlit UIを使うため逐次実行
     ensemble_df, model_status, weights = build_ensemble_df(lat, lon, selected_models, use_weighted=True)
+    acc = acc_future.result()
 
     if ensemble_df is None:
         st.error("天気データの取得に失敗しました。しばらく待ってから再試行してください。")
         st.stop()
+
+    # --- 的中率バナー ---
+    if acc:
+        st.markdown("### 📊 このゴルフ場における予報的中率（過去7日間実績）")
+        a1, a2, a3, a4 = st.columns(4)
+        score_color = "#2dc653" if acc["overall"] >= 80 else ("#ffd166" if acc["overall"] >= 65 else "#e63946")
+        a1.markdown(f"""
+        <div style='background:{score_color};border-radius:12px;padding:16px;text-align:center;color:#000'>
+        <div style='font-size:13px;font-weight:bold'>総合的中率</div>
+        <div style='font-size:38px;font-weight:bold'>{acc["overall"]:.1f}%</div>
+        </div>""", unsafe_allow_html=True)
+        a2.metric("🌡️ 気温的中率", f"{acc['temp_hit']:.1f}%",
+                  help="予報と実測の差が±2°C以内だった割合")
+        a2.caption(f"平均誤差: ±{acc['temp_mae']:.1f}°C")
+        if acc["precip_hit"] is not None:
+            a3.metric("🌧️ 降水的中率", f"{acc['precip_hit']:.1f}%",
+                      help="雨予報(確率50%以上)と実際の降雨(0.5mm以上)の一致率")
+        a4.metric("📅 検証期間", f"過去{acc['days']}日間",
+                  help=f"計{acc['hours']}時間分のデータで検証")
+        st.divider()
 
     # モデル取得状況 + 精度重みグラフ
     with st.expander("📡 モデル取得状況 & 精度重み（過去3日間の実績比較）"):
