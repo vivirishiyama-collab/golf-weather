@@ -741,13 +741,22 @@ if forecast_btn and lat:
         gfig.add_trace(go.Bar(x=score_df["時刻"], y=score_df["風スコア"],
             marker_color=bar_colors(score_df["風スコア"]),
             text=score_df["風スコア"], textposition="outside"), row=2, col=1)
+        n_hours = len(score_df)
         gfig.update_layout(
-            height=400, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            height=500, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
             font=dict(color="white"), showlegend=False,
             yaxis=dict(range=[0, 120]), yaxis2=dict(range=[0, 120]),
-            margin=dict(t=30, b=30),
+            margin=dict(t=30, b=10),
+            bargap=0.15,
         )
-        gfig.update_xaxes(gridcolor="#333")
+        gfig.update_xaxes(
+            gridcolor="#333",
+            tickmode="array",
+            tickvals=list(range(n_hours)),
+            ticktext=score_df["時刻"].tolist(),
+            tickangle=-45,
+            nticks=n_hours,
+        )
         gfig.update_yaxes(gridcolor="#333")
         st.plotly_chart(gfig, use_container_width=True)
         st.caption("🟢 80点以上: 最高　🟡 60〜79点: 良好　🟠 40〜59点: 注意　🔴 39点以下: 困難")
