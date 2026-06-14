@@ -58,19 +58,55 @@ WEATHER_CODE = {
 def get_weather_code_label(code):
     return WEATHER_CODE.get(int(code) if not np.isnan(code) else 0, f"コード{int(code)}")
 
-# ---- ゴルフ場 → 座標変換 ----
-@st.cache_data(ttl=3600)
-def geocode_golf_course(name: str):
-    geolocator = Nominatim(user_agent="golf_weather_app_v1")
-    # まず「ゴルフ場」として検索
-    for query in [f"{name} ゴルフ場", f"{name} golf course", name]:
-        try:
-            loc = geolocator.geocode(query, timeout=10, language="ja")
-            if loc:
-                return loc.latitude, loc.longitude, loc.address
-        except Exception:
-            time.sleep(1)
-    return None, None, None
+# ---- ゴルフ場名候補をNominatimで検索 ----
+@st.cache_data(ttl=3600, show_spinner=False)
+def search_golf_courses(keyword: str):
+    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す"""
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": keyword,
+                "format": "jsonv2",
+                "limit": 30,
+                "extratags": 1,
+                "addressdetails": 1,
+            },
+            headers={"User-Agent": "golf-weather-app/1.0 (r.ishiyama73@gmail.com)"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return []
+
+    results = []
+    seen = set()
+    for item in data:
+        # golf_courseタイプに絞り込み
+        if item.get("type") not in ("golf_course", "golf") and \
+           (item.get("extratags") or {}).get("leisure") != "golf_course":
+            continue
+        name = item.get("name") or item.get("display_name", "").split(",")[0]
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        addr_obj = item.get("address", {})
+        addr_parts = [
+            addr_obj.get("country", ""),
+            addr_obj.get("state", "") or addr_obj.get("province", ""),
+            addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
+        ]
+        addr = " ".join(p for p in addr_parts if p) or "住所不明"
+        results.append({
+            "name": name,
+            "lat": float(item["lat"]),
+            "lon": float(item["lon"]),
+            "address": addr,
+        })
+
+    results.sort(key=lambda x: x["name"])
+    return results
 
 # ---- 単一モデルの天気データ取得 ----
 @st.cache_data(ttl=1800)
@@ -103,36 +139,93 @@ def fetch_model_forecast(lat, lon, model_id):
     except Exception:
         return None
 
-# ---- アンサンブル天気データ取得（50モデル） ----
-@st.cache_data(ttl=1800)
-def fetch_ensemble_forecast(lat, lon):
-    url = "https://ensemble-api.open-meteo.com/v1/ensemble"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "hourly": [
-            "temperature_2m",
-            "precipitation",
-            "precipitation_probability",
-            "windspeed_10m",
-            "weathercode",
-        ],
-        "models": "icon_seamless",  # ICON: 40メンバー
-        "forecast_days": 7,
-        "timezone": "auto",
-        "wind_speed_unit": "ms",
-    }
+# ---- 過去の実測値を取得（Open-Meteo Historical API）----
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_actual_weather(lat, lon, start_date: str, end_date: str):
+    """指定期間の実測気象データを取得する"""
     try:
-        r = requests.get(url, params=params, timeout=20)
+        r = requests.get(
+            "https://archive-api.open-meteo.com/v1/archive",
+            params={
+                "latitude": lat, "longitude": lon,
+                "start_date": start_date, "end_date": end_date,
+                "hourly": ["temperature_2m", "precipitation", "windspeed_10m"],
+                "timezone": "auto", "wind_speed_unit": "ms",
+            },
+            timeout=20,
+        )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        df = pd.DataFrame(data["hourly"])
+        df["time"] = pd.to_datetime(df["time"])
+        return df
     except Exception:
         return None
 
-# ---- 複数モデルをアンサンブル集計 ----
-def build_ensemble_df(lat, lon, models_to_use):
+# ---- 過去3日間の各モデル予報 vs 実測でMAEを計算し重みを返す ----
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_model_weights(lat, lon, models_to_use: tuple):
+    """過去3日間の予報誤差（MAE）を計算し、精度の高いモデルに大きな重みを付ける"""
+    today = datetime.now().date()
+    start = (today - timedelta(days=4)).isoformat()
+    end   = (today - timedelta(days=1)).isoformat()
+
+    actual_df = fetch_actual_weather(lat, lon, start, end)
+    if actual_df is None or actual_df.empty:
+        # 実測が取れない場合は均等重み
+        return {name: 1.0 for name in dict(models_to_use)}
+
+    model_mae = {}
+    for name, model_id in dict(models_to_use).items():
+        try:
+            r = requests.get(
+                "https://historical-forecast-api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": lat, "longitude": lon,
+                    "start_date": start, "end_date": end,
+                    "hourly": ["temperature_2m", "precipitation", "windspeed_10m"],
+                    "models": model_id,
+                    "timezone": "auto", "wind_speed_unit": "ms",
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+            pred_df = pd.DataFrame(r.json()["hourly"])
+            pred_df["time"] = pd.to_datetime(pred_df["time"])
+
+            merged = actual_df.merge(pred_df, on="time", suffixes=("_act", "_pred"))
+            if merged.empty:
+                continue
+            mae = (merged["temperature_2m_act"] - merged["temperature_2m_pred"]).abs().mean()
+            model_mae[name] = float(mae)
+        except Exception:
+            pass
+        time.sleep(0.05)
+
+    if not model_mae:
+        return {name: 1.0 for name in dict(models_to_use)}
+
+    # MAEが小さいほど重みを大きく（逆数比例）
+    min_mae = min(model_mae.values()) + 0.01
+    weights = {}
+    for name in dict(models_to_use):
+        mae = model_mae.get(name, max(model_mae.values()) * 1.5)
+        weights[name] = min_mae / (mae + 0.01)
+
+    # 正規化
+    total = sum(weights.values())
+    return {k: v / total * len(weights) for k, v in weights.items()}
+
+# ---- 複数モデルを加重アンサンブル集計 ----
+def build_ensemble_df(lat, lon, models_to_use, use_weighted=True):
     all_dfs = []
     model_status = {}
+
+    # 精度ベースの重み計算（バックグラウンドで並行実行）
+    weights = {}
+    if use_weighted:
+        with st.spinner("過去実績から各モデルの精度を計算中..."):
+            weights = compute_model_weights(lat, lon, tuple(models_to_use.items()))
 
     progress = st.progress(0, text="気象モデルを取得中...")
     for i, (name, model_id) in enumerate(models_to_use.items()):
@@ -142,8 +235,10 @@ def build_ensemble_df(lat, lon, models_to_use):
             df = pd.DataFrame(data["hourly"])
             df["time"] = pd.to_datetime(df["time"])
             df["model"] = name
+            df["weight"] = weights.get(name, 1.0)
             all_dfs.append(df)
-            model_status[name] = "✅"
+            w = weights.get(name, 1.0)
+            model_status[name] = f"✅ (精度重み: {w:.2f})"
         else:
             model_status[name] = "❌ (取得失敗)"
         time.sleep(0.1)
@@ -151,44 +246,94 @@ def build_ensemble_df(lat, lon, models_to_use):
     progress.empty()
 
     if not all_dfs:
-        return None, model_status
+        return None, model_status, {}
 
-    # 全モデルを時刻でアライン
     numeric_cols = [
         "temperature_2m", "precipitation_probability", "precipitation",
         "windspeed_10m", "winddirection_10m", "apparent_temperature",
         "cloudcover", "uv_index", "visibility",
     ]
 
-    # 各モデルのDataFrameを結合して時刻ごとに平均
     combined = pd.concat(all_dfs, ignore_index=True)
-    agg = {col: "mean" for col in numeric_cols if col in combined.columns}
-    # weathercodeはmodeで集計
-    if "weathercode" in combined.columns:
-        agg["weathercode"] = lambda x: x.mode()[0] if len(x) > 0 else 0
 
-    ensemble_df = combined.groupby("time").agg(agg).reset_index()
+    # 加重平均
+    def weighted_mean(group):
+        row = {}
+        w = group["weight"]
+        for col in numeric_cols:
+            if col in group.columns:
+                valid = group[col].notna()
+                if valid.any():
+                    row[col] = (group.loc[valid, col] * w[valid]).sum() / w[valid].sum()
+                else:
+                    row[col] = np.nan
+        if "weathercode" in group.columns:
+            row["weathercode"] = group["weathercode"].mode().iloc[0] if not group["weathercode"].mode().empty else 0
+        return pd.Series(row)
 
-    # 標準偏差（不確実性）を計算
+    ensemble_df = combined.groupby("time").apply(weighted_mean, include_groups=False).reset_index()
+
     std_df = combined.groupby("time")[["temperature_2m", "precipitation"]].std().reset_index()
     std_df.columns = ["time", "temp_std", "precip_std"]
     ensemble_df = ensemble_df.merge(std_df, on="time", how="left")
 
-    return ensemble_df, model_status
+    return ensemble_df, model_status, weights
 
 # ---- メイン UI ----
 st.title("⛳ ゴルフ場 精密天気予報")
 st.caption("世界8カ国の気象モデルをアンサンブル集計 — 統計的に最も精度の高い予報を提供")
 
+# セッション初期化
+if "candidates" not in st.session_state:
+    st.session_state.candidates = []
+if "selected_course" not in st.session_state:
+    st.session_state.selected_course = None
+
 col1, col2 = st.columns([3, 1])
 with col1:
-    course_name = st.text_input(
-        "ゴルフ場名を入力",
-        placeholder="例: 小野東洋ゴルフクラブ、Pebble Beach Golf Links",
-        label_visibility="collapsed"
+    keyword = st.text_input(
+        "ゴルフ場名を入力（2文字以上で候補が出ます）",
+        placeholder="例: オーク、太平洋、Pebble Beach",
+        label_visibility="collapsed",
+        key="keyword_input",
     )
 with col2:
-    search_btn = st.button("🔍 予報を取得", type="primary", use_container_width=True)
+    search_btn = st.button("🔍 候補を検索", type="secondary", use_container_width=True)
+
+# キーワードが2文字以上になったら自動検索
+if keyword and len(keyword) >= 2:
+    if search_btn or (
+        "last_keyword" not in st.session_state
+        or st.session_state.last_keyword != keyword
+    ):
+        with st.spinner(f"「{keyword}」に一致するゴルフ場を検索中..."):
+            st.session_state.candidates = search_golf_courses(keyword)
+            st.session_state.last_keyword = keyword
+            st.session_state.selected_course = None
+
+# 候補プルダウン表示
+lat, lon, address, course_name = None, None, None, None
+forecast_btn = False
+
+if st.session_state.candidates:
+    options = [f"{c['name']}　（{c['address']}）" for c in st.session_state.candidates]
+    chosen = st.selectbox(
+        f"候補 {len(options)} 件 — 選んでください",
+        options,
+        index=0,
+        key="course_select",
+    )
+    chosen_idx = options.index(chosen)
+    chosen_data = st.session_state.candidates[chosen_idx]
+    lat = chosen_data["lat"]
+    lon = chosen_data["lon"]
+    course_name = chosen_data["name"]
+    address = chosen_data["address"]
+
+    forecast_btn = st.button("⛅ この場所の予報を取得", type="primary")
+
+elif keyword and len(keyword) >= 2 and "last_keyword" in st.session_state:
+    st.warning("ゴルフ場が見つかりませんでした。別のキーワードをお試しください（例: 英語名、省略なしの正式名称）。")
 
 # モデル選択
 with st.expander("⚙️ 使用する気象モデルを選択（デフォルト: 全8モデル）"):
@@ -203,28 +348,39 @@ if not selected_models:
     st.warning("少なくとも1つのモデルを選択してください。")
     st.stop()
 
-if search_btn and course_name:
-    # --- 座標取得 ---
-    with st.spinner(f"「{course_name}」の場所を特定中..."):
-        lat, lon, address = geocode_golf_course(course_name)
-
-    if lat is None:
-        st.error("ゴルフ場が見つかりませんでした。正式名称や英語名で試してください。")
-        st.stop()
-
+if forecast_btn and lat:
     st.success(f"📍 **{course_name}**  |  {address}  |  緯度 {lat:.4f} / 経度 {lon:.4f}")
 
-    # --- アンサンブル取得 ---
-    ensemble_df, model_status = build_ensemble_df(lat, lon, selected_models)
+    # --- アンサンブル取得（加重） ---
+    ensemble_df, model_status, weights = build_ensemble_df(lat, lon, selected_models, use_weighted=True)
 
     if ensemble_df is None:
         st.error("天気データの取得に失敗しました。しばらく待ってから再試行してください。")
         st.stop()
 
-    # モデル取得状況
-    with st.expander("📡 モデル取得状況"):
+    # モデル取得状況 + 精度重みグラフ
+    with st.expander("📡 モデル取得状況 & 精度重み（過去3日間の実績比較）"):
         for name, status in model_status.items():
             st.write(f"{status} {name}")
+
+        if weights and any(v != 1.0 for v in weights.values()):
+            st.markdown("##### 精度重み（高いほど今回の予報に大きく反映）")
+            sorted_w = sorted(weights.items(), key=lambda x: -x[1])
+            w_names = [n.split("(")[0].strip() for n, _ in sorted_w]
+            w_vals  = [v for _, v in sorted_w]
+            wfig = go.Figure(go.Bar(
+                x=w_vals, y=w_names, orientation="h",
+                marker_color=["#2dc653" if v >= 1.0 else "#f4a261" for v in w_vals],
+                text=[f"{v:.2f}" for v in w_vals], textposition="outside",
+            ))
+            wfig.update_layout(
+                height=280, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="white", size=11),
+                xaxis=dict(range=[0, max(w_vals) * 1.3]),
+                margin=dict(l=10, r=40, t=10, b=10),
+            )
+            st.plotly_chart(wfig, use_container_width=True)
+            st.caption("※ 過去3日間の気温予報 vs 実測値（MAE）をもとに自動計算")
 
     # --- 今日・明日・明後日タブ ---
     now = pd.Timestamp.now(tz=ensemble_df["time"].dt.tz).tz_convert(ensemble_df["time"].dt.tz) if ensemble_df["time"].dt.tz else pd.Timestamp.now()
@@ -413,9 +569,10 @@ else:
     st.markdown("""
     ---
     ### 使い方
-    1. 上の検索欄にゴルフ場名を入力（日本語・英語どちらでも可）
-    2. 「予報を取得」ボタンをクリック
-    3. 世界8カ国の気象モデルをリアルタイムで集計し、最も精度の高い予報を表示します
+    1. 上の検索欄にゴルフ場名を **2文字以上** 入力する（例: **オーク**、**太平洋**、**Pebble**）
+    2. 「候補を検索」ボタンを押すと一致するゴルフ場がプルダウンで表示される
+    3. リストから行きたいゴルフ場を選んで「この場所の予報を取得」をクリック
+    4. 世界8カ国の気象モデルをリアルタイムで集計し、最も精度の高い予報を表示します
 
     **対応している気象モデル：**
     | モデル | 提供機関 | 特徴 |
