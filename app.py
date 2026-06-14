@@ -783,7 +783,7 @@ if forecast_btn and lat:
                 future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
                 for date in sorted(future_df["time"].dt.date.unique()):
                     day_df = future_df[future_df["time"].dt.date == date]
-                    render_day_detail(day_df, date.strftime("%-m月%-d日"))
+                    render_day_detail(day_df, f"{date.month}月{date.day}日")
                     st.divider()
 
     # --- 全期間グラフ ---
