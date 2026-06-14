@@ -659,16 +659,13 @@ if forecast_btn and lat:
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
         display_df["天気"] = display_df["weathercode"].fillna(0).apply(get_weather_code_label)
         display_df["気温(°C)"] = display_df["temperature_2m"].round(1)
-        display_df["体感気温(°C)"] = display_df["apparent_temperature"].round(1)
         display_df["降水確率(%)"] = to_int_safe(display_df["precipitation_probability"])
         display_df["降水量(mm)"] = display_df["precipitation"].fillna(0).round(1)
         display_df["風速(m/s)"] = display_df["windspeed_10m"].round(1)
-        display_df["雲量(%)"] = to_int_safe(display_df["cloudcover"])
         display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
 
         st.dataframe(
-            display_df[["時刻", "天気", "気温(°C)", "体感気温(°C)",
-                          "降水確率(%)", "降水量(mm)", "風速(m/s)", "雲量(%)", "コメント"]],
+            display_df[["時刻", "天気", "気温(°C)", "降水確率(%)", "降水量(mm)", "風速(m/s)", "コメント"]],
             use_container_width=True,
             hide_index=True,
             column_config={"コメント": st.column_config.TextColumn(width="large")},
@@ -701,12 +698,11 @@ if forecast_btn and lat:
             shared_xaxes=True,
             vertical_spacing=0.06,
             subplot_titles=(
-                "🌡️ 気温・体感気温 (°C)",
+                "🌡️ 気温 (°C)",
                 "🌧️ 降水確率 (%) / 降水量 (mm)",
                 "💨 風速 (m/s)",
-                "☁️ 雲量 (%)",
             ),
-            row_heights=[0.3, 0.25, 0.25, 0.2],
+            row_heights=[0.35, 0.35, 0.30],
         )
 
         x = ensemble_df["time"]
@@ -714,9 +710,6 @@ if forecast_btn and lat:
         # 気温
         fig.add_trace(go.Scatter(x=x, y=ensemble_df["temperature_2m"],
             name="気温", line=dict(color="#ff6b35", width=2.5)), row=1, col=1)
-        if "apparent_temperature" in ensemble_df:
-            fig.add_trace(go.Scatter(x=x, y=ensemble_df["apparent_temperature"],
-                name="体感気温", line=dict(color="#ffd166", width=1.5, dash="dot")), row=1, col=1)
         # 不確実性バンド
         if "temp_std" in ensemble_df:
             fig.add_trace(go.Scatter(
@@ -740,20 +733,13 @@ if forecast_btn and lat:
         fig.add_trace(go.Scatter(x=x, y=ensemble_df["windspeed_10m"],
             name="風速(m/s)", line=dict(color="#06d6a0", width=2),
             fill="tozeroy", fillcolor="rgba(6,214,160,0.15)"), row=3, col=1)
-        # 警戒ライン
         fig.add_hline(y=5, line_dash="dash", line_color="orange",
                       annotation_text="注意(5m/s)", row=3, col=1)
         fig.add_hline(y=10, line_dash="dash", line_color="red",
                       annotation_text="警戒(10m/s)", row=3, col=1)
 
-        # 雲量
-        if "cloudcover" in ensemble_df:
-            fig.add_trace(go.Scatter(x=x, y=ensemble_df["cloudcover"],
-                name="雲量(%)", line=dict(color="#adb5bd", width=2),
-                fill="tozeroy", fillcolor="rgba(173,181,189,0.2)"), row=4, col=1)
-
         fig.update_layout(
-            height=820,
+            height=680,
             paper_bgcolor="#0e1117",
             plot_bgcolor="#0e1117",
             font=dict(color="white", size=12),
