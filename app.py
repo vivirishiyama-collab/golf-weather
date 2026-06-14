@@ -712,9 +712,10 @@ if forecast_btn and lat:
             elif pp >= 60:  s -= 40
             elif pp >= 40:  s -= 20
             elif pp >= 20:  s -= 10
-            if pr >= 5:     s -= 30
-            elif pr >= 2:   s -= 20
-            elif pr >= 0.5: s -= 10
+            if pr >= 5:     s -= 30   # 強雨
+            elif pr >= 2:   s -= 20   # 雨
+            elif pr >= 1:   s -= 8    # 小雨
+            elif pr >= 0.3: s -= 3    # 霧雨程度・ほぼ問題なし
             if ws >= 12:    s -= 45
             elif ws >= 8:   s -= 30
             elif ws >= 6:   s -= 15
