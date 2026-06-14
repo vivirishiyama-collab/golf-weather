@@ -134,16 +134,16 @@ def _geocode_area(area_name: str) -> dict | None:
     return None
 
 def _overpass_search_area(lat: float, lon: float, radius_km: float = 40) -> list:
-    """指定座標の半径radius_km km以内にあるゴルフ場をOverpassで検索"""
+    """指定座標の半径radius_km km以内にあるゴルフ場をOverpassで検索。
+    nodeは小施設（室内含む）が多いため除外し、wayとrelationのみ取得。"""
     radius_m = int(radius_km * 1000)
     query = f"""
-[out:json][timeout:25];
+[out:json][timeout:20];
 (
-  node["leisure"="golf_course"](around:{radius_m},{lat},{lon});
   way["leisure"="golf_course"](around:{radius_m},{lat},{lon});
   relation["leisure"="golf_course"](around:{radius_m},{lat},{lon});
 );
-out center 80;
+out center 60;
 """
     return _overpass_query(query)
 
@@ -162,7 +162,12 @@ def _nominatim_search(query: str) -> list:
     except Exception:
         return []
 
-_INDOOR_KEYWORDS = ("練習場", "打ちっぱなし", "打ちっ放し", "インドア", "indoor", "driving range", "センター")
+_INDOOR_KEYWORDS = (
+    "練習場", "打ちっぱなし", "打ちっ放し", "打放し", "インドア", "indoor",
+    "driving range", "センター", "スクール", "アカデミー", "academy",
+    "simulator", "シミュレーター", "バー", "bar", "ラウンジ", "パター",
+    "アミューズ", "体験", "ゲーム",
+)
 
 def _parse_overpass_elements(elements: list, seen_names: set, seen_coords: set) -> list:
     """Overpassのelementsリストをゴルフ場dictリストに変換（屋内・練習場を除外）"""
@@ -208,22 +213,37 @@ def search_golf_courses(keyword: str):
     all_elements = []
 
     # 名前検索とエリア検索を並列実行
+    area_label = [None]  # エリア名を住所として使うために保持
+
     def area_search():
         info = _geocode_area(keyword)
         if info:
+            area_label[0] = keyword  # 検索キーワードを住所ラベルとして使う
             return _overpass_search_area(info["lat"], info["lon"], radius_km=40)
         return []
 
+    name_elements = []
+    area_elements = []
     with ThreadPoolExecutor(max_workers=2) as ex:
         f_name = ex.submit(_overpass_search, keyword)
         f_area = ex.submit(area_search)
-        for f in as_completed([f_name, f_area]):
-            try:
-                all_elements.extend(f.result())
-            except Exception:
-                pass
+        try:
+            name_elements = f_name.result()
+        except Exception:
+            pass
+        try:
+            area_elements = f_area.result()
+        except Exception:
+            pass
 
-    results = _parse_overpass_elements(all_elements, seen_names, seen_coords)
+    results = _parse_overpass_elements(name_elements, seen_names, seen_coords)
+    # エリア検索結果は住所ラベルを付与してから追加
+    area_results = _parse_overpass_elements(area_elements, seen_names, seen_coords)
+    if area_label[0]:
+        for r in area_results:
+            if r["address"] == "住所不明":
+                r["address"] = area_label[0] + "周辺"
+    results.extend(area_results)
 
     # Overpassで結果が少ない場合のみNominatimで補完（1クエリのみ）
     if len(results) < 3:
