@@ -775,15 +775,19 @@ if forecast_btn and lat:
             target_date = today + timedelta(days=i) if i < 3 else None
             if i < 3:
                 day_df = ensemble_df[ensemble_df["time"].dt.date == target_date]
+                WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
                 label = ["今日", "明日", "明後日"][i]
-                render_day_detail(day_df, f"{label} ({target_date.strftime('%m/%d')})")
+                dow = WEEKDAYS[target_date.weekday()]
+                render_day_detail(day_df, f"{label} ({target_date.strftime('%m/%d')}・{dow})")
             else:
                 # 3〜7日先
+                WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
                 start = today + timedelta(days=3)
                 future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
                 for date in sorted(future_df["time"].dt.date.unique()):
                     day_df = future_df[future_df["time"].dt.date == date]
-                    render_day_detail(day_df, f"{date.month}月{date.day}日")
+                    dow = WEEKDAYS[date.weekday()]
+                    render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）")
                     st.divider()
 
     # --- 全期間グラフ ---
