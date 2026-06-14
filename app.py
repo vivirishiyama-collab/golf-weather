@@ -203,49 +203,16 @@ def _parse_overpass_elements(elements: list, seen_names: set, seen_coords: set) 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def search_golf_courses(keyword: str):
-    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。
-    地域名（市区町村）が入力された場合はその周辺のゴルフ場を一覧表示。"""
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    """ゴルフ場名でOSM検索。結果が少ない場合はNominatimで補完。"""
 
     seen_names = set()
     seen_coords = set()
-    all_elements = []
 
-    # 名前検索とエリア検索を並列実行
-    area_label = [None]  # エリア名を住所として使うために保持
+    # Overpass APIでゴルフ場名を部分一致検索
+    elements = _overpass_search(keyword)
+    results = _parse_overpass_elements(elements, seen_names, seen_coords)
 
-    def area_search():
-        info = _geocode_area(keyword)
-        if info:
-            area_label[0] = keyword  # 検索キーワードを住所ラベルとして使う
-            return _overpass_search_area(info["lat"], info["lon"], radius_km=40)
-        return []
-
-    name_elements = []
-    area_elements = []
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_name = ex.submit(_overpass_search, keyword)
-        f_area = ex.submit(area_search)
-        try:
-            name_elements = f_name.result()
-        except Exception:
-            pass
-        try:
-            area_elements = f_area.result()
-        except Exception:
-            pass
-
-    results = _parse_overpass_elements(name_elements, seen_names, seen_coords)
-    # エリア検索結果は住所ラベルを付与してから追加
-    area_results = _parse_overpass_elements(area_elements, seen_names, seen_coords)
-    if area_label[0]:
-        for r in area_results:
-            if r["address"] == "住所不明":
-                r["address"] = area_label[0] + "周辺"
-    results.extend(area_results)
-
-    # Overpassで結果が少ない場合のみNominatimで補完（1クエリのみ）
+    # 結果が少ない場合のみNominatimで補完（1クエリのみ）
     if len(results) < 3:
         for item in _nominatim_search(f"{keyword} ゴルフ"):
             item_type = item.get("type", "")
@@ -636,7 +603,7 @@ if "selected_course" not in st.session_state:
 col1, col2 = st.columns([3, 1])
 with col1:
     keyword = st.text_input(
-        "ゴルフ場名 または 地域名を入力（2文字以上）",
+        "ゴルフ場名 または 市区町村名を入力（2文字以上）",
         placeholder="例: オーク、太平洋、成田市、千葉県、Pebble Beach",
         label_visibility="collapsed",
         key="keyword_input",
@@ -677,21 +644,32 @@ if st.session_state.candidates:
     forecast_btn = st.button("⛅ この場所の予報を取得", type="primary")
 
 elif keyword and len(keyword) >= 2 and "last_keyword" in st.session_state:
-    st.warning("ゴルフ場が見つかりませんでした。正式名称（例：〇〇ゴルフ倶楽部、〇〇カントリークラブ）で再検索するか、下の座標入力をお使いください。")
-    with st.expander("📍 緯度・経度を直接入力（Google マップで調べた座標を貼り付け）"):
-        _c1, _c2, _c3 = st.columns([2, 2, 3])
-        with _c1:
-            _manual_lat = st.number_input("緯度", value=35.0, format="%.6f", key="manual_lat")
-        with _c2:
-            _manual_lon = st.number_input("経度", value=135.0, format="%.6f", key="manual_lon")
-        with _c3:
-            _manual_name = st.text_input("ゴルフ場名（任意）", value=keyword, key="manual_name")
-        if st.button("⛅ この座標で予報を取得", type="primary", key="manual_btn"):
-            lat = _manual_lat
-            lon = _manual_lon
-            course_name = _manual_name
-            address = f"緯度 {_manual_lat:.4f} / 経度 {_manual_lon:.4f}"
+    # ゴルフ場が見つからない → 地域名として解釈してジオコード
+    _area = _geocode_area(keyword)
+    if _area:
+        st.info(f"📍 「{keyword}」の天気予報を表示します")
+        if st.button(f"⛅ {keyword}の天気予報を取得", type="primary", key="area_btn"):
+            lat = _area["lat"]
+            lon = _area["lon"]
+            course_name = keyword
+            address = keyword
             forecast_btn = True
+    else:
+        st.warning("見つかりませんでした。正式なゴルフ場名（例：〇〇ゴルフ倶楽部）または市区町村名で再検索してください。")
+        with st.expander("📍 緯度・経度を直接入力"):
+            _c1, _c2, _c3 = st.columns([2, 2, 3])
+            with _c1:
+                _manual_lat = st.number_input("緯度", value=35.0, format="%.6f", key="manual_lat")
+            with _c2:
+                _manual_lon = st.number_input("経度", value=135.0, format="%.6f", key="manual_lon")
+            with _c3:
+                _manual_name = st.text_input("場所名（任意）", value=keyword, key="manual_name")
+            if st.button("⛅ この座標で予報を取得", type="primary", key="manual_btn"):
+                lat = _manual_lat
+                lon = _manual_lon
+                course_name = _manual_name
+                address = f"緯度 {_manual_lat:.4f} / 経度 {_manual_lon:.4f}"
+                forecast_btn = True
 
 # モデル選択
 with st.expander("⚙️ 使用する気象モデルを選択（デフォルト: 全8モデル）"):
