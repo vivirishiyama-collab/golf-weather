@@ -80,21 +80,8 @@ def get_weather_code_label(code):
 
 # ---- ゴルフ場名候補を検索（Overpass API優先 → Nominatimフォールバック） ----
 
-def _overpass_search(keyword: str) -> list:
-    """Overpass APIでleisure=golf_courseタグを持つ施設をキーワード部分一致検索"""
-    # 名前フィールドへの正規表現マッチ（大文字小文字無視）
-    escaped = keyword.replace('"', '\\"')
-    query = f"""
-[out:json][timeout:20];
-(
-  node["leisure"="golf_course"]["name"~"{escaped}",i];
-  way["leisure"="golf_course"]["name"~"{escaped}",i];
-  relation["leisure"="golf_course"]["name"~"{escaped}",i];
-  node["golf"="course"]["name"~"{escaped}",i];
-  way["golf"="course"]["name"~"{escaped}",i];
-);
-out center 50;
-"""
+def _overpass_query(query: str) -> list:
+    """Overpass APIにクエリを投げてelementsリストを返す"""
     for endpoint in [
         "https://overpass-api.de/api/interpreter",
         "https://lz4.overpass-api.de/api/interpreter",
@@ -107,6 +94,58 @@ out center 50;
         except Exception:
             continue
     return []
+
+def _overpass_search(keyword: str) -> list:
+    """Overpass APIでleisure=golf_courseタグを持つ施設をキーワード部分一致検索"""
+    escaped = keyword.replace('"', '\\"')
+    query = f"""
+[out:json][timeout:20];
+(
+  node["leisure"="golf_course"]["name"~"{escaped}",i];
+  way["leisure"="golf_course"]["name"~"{escaped}",i];
+  relation["leisure"="golf_course"]["name"~"{escaped}",i];
+  node["golf"="course"]["name"~"{escaped}",i];
+  way["golf"="course"]["name"~"{escaped}",i];
+);
+out center 50;
+"""
+    return _overpass_query(query)
+
+def _geocode_area(area_name: str) -> dict | None:
+    """地域名（市区町村など）をNominatimでジオコーディングして中心座標とbboxを返す"""
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": area_name, "format": "jsonv2", "limit": 1,
+                    "addressdetails": 0, "countrycodes": "jp"},
+            headers={"User-Agent": "golf-weather-app/1.0 (r.ishiyama73@gmail.com)"},
+            timeout=10,
+        )
+        items = r.json()
+        if items:
+            item = items[0]
+            return {
+                "lat": float(item["lat"]),
+                "lon": float(item["lon"]),
+                "bbox": item.get("boundingbox"),  # [min_lat, max_lat, min_lon, max_lon]
+            }
+    except Exception:
+        pass
+    return None
+
+def _overpass_search_area(lat: float, lon: float, radius_km: float = 40) -> list:
+    """指定座標の半径radius_km km以内にあるゴルフ場をOverpassで検索"""
+    radius_m = int(radius_km * 1000)
+    query = f"""
+[out:json][timeout:25];
+(
+  node["leisure"="golf_course"](around:{radius_m},{lat},{lon});
+  way["leisure"="golf_course"](around:{radius_m},{lat},{lon});
+  relation["leisure"="golf_course"](around:{radius_m},{lat},{lon});
+);
+out center 80;
+"""
+    return _overpass_query(query)
 
 def _nominatim_search(query: str) -> list:
     """Nominatim に1クエリ投げてゴルフ場リストを返す（フォールバック用）"""
@@ -123,16 +162,9 @@ def _nominatim_search(query: str) -> list:
     except Exception:
         return []
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def search_golf_courses(keyword: str):
-    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。"""
-
+def _parse_overpass_elements(elements: list, seen_names: set, seen_coords: set) -> list:
+    """Overpassのelementsリストをゴルフ場dictリストに変換"""
     results = []
-    seen_names = set()
-    seen_coords = set()
-
-    # --- 1. Overpass APIで直接ゴルフ場タグを検索（最も精度が高い） ---
-    elements = _overpass_search(keyword)
     for el in elements:
         tags = el.get("tags", {})
         name = tags.get("name") or tags.get("name:ja") or tags.get("name:en")
@@ -149,14 +181,33 @@ def search_golf_courses(keyword: str):
         seen_names.add(name)
         seen_coords.add((lat_r, lon_r))
         addr_parts = [
-            tags.get("addr:country", "日本"),
             tags.get("addr:province", "") or tags.get("addr:state", ""),
             tags.get("addr:city", "") or tags.get("addr:county", ""),
         ]
         addr = " ".join(p for p in addr_parts if p) or "住所不明"
         results.append({"name": name, "lat": float(lat), "lon": float(lon), "address": addr})
+    return results
 
-    # --- 2. Overpassで結果が少ない場合はNominatimで補完 ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def search_golf_courses(keyword: str):
+    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。
+    地域名（市区町村）が入力された場合はその周辺のゴルフ場を一覧表示。"""
+
+    results = []
+    seen_names = set()
+    seen_coords = set()
+
+    # --- 1. Overpass APIでゴルフ場名を部分一致検索 ---
+    elements = _overpass_search(keyword)
+    results.extend(_parse_overpass_elements(elements, seen_names, seen_coords))
+
+    # --- 2. 地域名として解釈してエリア内のゴルフ場を検索 ---
+    area_info = _geocode_area(keyword)
+    if area_info:
+        area_elements = _overpass_search_area(area_info["lat"], area_info["lon"], radius_km=40)
+        results.extend(_parse_overpass_elements(area_elements, seen_names, seen_coords))
+
+    # --- 3. Overpassで結果が少ない場合はNominatimで補完 ---
     if len(results) < 3:
         for q in [f"{keyword} ゴルフ", f"{keyword} golf"]:
             for item in _nominatim_search(q):
@@ -181,7 +232,6 @@ def search_golf_courses(keyword: str):
                 seen_coords.add((lat_r, lon_r))
                 addr_obj = item.get("address", {})
                 addr_parts = [
-                    addr_obj.get("country", ""),
                     addr_obj.get("state", "") or addr_obj.get("province", ""),
                     addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
                 ]
@@ -550,8 +600,8 @@ if "selected_course" not in st.session_state:
 col1, col2 = st.columns([3, 1])
 with col1:
     keyword = st.text_input(
-        "ゴルフ場名を入力（2文字以上で候補が出ます）",
-        placeholder="例: オーク、太平洋、Pebble Beach",
+        "ゴルフ場名 または 地域名を入力（2文字以上）",
+        placeholder="例: オーク、太平洋、成田市、千葉県、Pebble Beach",
         label_visibility="collapsed",
         key="keyword_input",
     )
@@ -896,7 +946,7 @@ else:
     st.markdown("""
     ---
     ### 使い方
-    1. 上の検索欄にゴルフ場名を **2文字以上** 入力する（例: **オーク**、**太平洋**、**Pebble**）
+    1. 上の検索欄にゴルフ場名 または 地域名（市区町村・都道府県）を **2文字以上** 入力する（例: **オーク**、**成田市**、**千葉県**、**Pebble**）
     2. 「候補を検索」ボタンを押すと一致するゴルフ場がプルダウンで表示される
     3. リストから行きたいゴルフ場を選んで「この場所の予報を取得」をクリック
     4. 世界8カ国の気象モデルをリアルタイムで集計し、最も精度の高い予報を表示します
