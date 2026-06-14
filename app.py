@@ -796,15 +796,16 @@ if forecast_btn and lat:
         elif pr >= 2:  score -= 20  # 雨
         elif pr >= 0.5: score -= 10  # 小雨
 
-        # 風速
+        # 風速（4m/sから減点開始）
         ws = row.get("windspeed_10m", 0) or 0
-        if ws >= 12:   score -= 35
-        elif ws >= 8:  score -= 20
-        elif ws >= 5:  score -= 8
+        if ws >= 12:   score -= 45
+        elif ws >= 8:  score -= 30
+        elif ws >= 6:  score -= 15
+        elif ws >= 4:  score -= 8
 
         # 気温
         t = row.get("temperature_2m", 20) or 20
-        if 16 <= t <= 26:  score += 5   # 理想的
+        if 16 <= t <= 26:  score += 5
         elif t < 5 or t > 35: score -= 25
         elif t < 10 or t > 32: score -= 12
 
