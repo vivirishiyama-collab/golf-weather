@@ -696,6 +696,62 @@ if forecast_btn and lat:
             column_config={"コメント": st.column_config.TextColumn(width="large")},
         )
 
+        # ゴルフ適性スコア 2軸グラフ（天気 & 風）
+        st.markdown("#### 🏌️ ゴルフ適性スコア（天気・風の2軸）")
+        score_df = display_df.copy()
+
+        def rain_score(row):
+            s = 100
+            pp = row.get("降水確率(%)", 0) or 0
+            pr = row.get("降水量(mm)", 0) or 0
+            if pp >= 80:    s -= 60
+            elif pp >= 60:  s -= 40
+            elif pp >= 40:  s -= 20
+            elif pp >= 20:  s -= 10
+            if pr >= 5:     s -= 30
+            elif pr >= 2:   s -= 20
+            elif pr >= 0.5: s -= 10
+            t = row.get("気温(°C)", 20) or 20
+            if 16 <= t <= 26:    s += 5
+            elif t < 5 or t > 35: s -= 25
+            elif t < 10 or t > 32: s -= 12
+            return max(0, min(100, s))
+
+        def wind_score(row):
+            s = 100
+            ws = row.get("風速(m/s)", 0) or 0
+            if ws >= 12:   s -= 60
+            elif ws >= 8:  s -= 40
+            elif ws >= 6:  s -= 20
+            elif ws >= 4:  s -= 10
+            return max(0, min(100, s))
+
+        score_df["天気スコア"] = score_df.apply(rain_score, axis=1).astype(int)
+        score_df["風スコア"]   = score_df.apply(wind_score, axis=1).astype(int)
+
+        gfig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                             subplot_titles=("🌧️ 天気スコア（雨・気温）", "💨 風スコア"),
+                             vertical_spacing=0.12)
+        def bar_colors(vals):
+            return ["#2dc653" if v >= 80 else "#ffd166" if v >= 60 else "#f4a261" if v >= 40 else "#e63946" for v in vals]
+
+        gfig.add_trace(go.Bar(x=score_df["時刻"], y=score_df["天気スコア"],
+            marker_color=bar_colors(score_df["天気スコア"]),
+            text=score_df["天気スコア"], textposition="outside"), row=1, col=1)
+        gfig.add_trace(go.Bar(x=score_df["時刻"], y=score_df["風スコア"],
+            marker_color=bar_colors(score_df["風スコア"]),
+            text=score_df["風スコア"], textposition="outside"), row=2, col=1)
+        gfig.update_layout(
+            height=400, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="white"), showlegend=False,
+            yaxis=dict(range=[0, 120]), yaxis2=dict(range=[0, 120]),
+            margin=dict(t=30, b=30),
+        )
+        gfig.update_xaxes(gridcolor="#333")
+        gfig.update_yaxes(gridcolor="#333")
+        st.plotly_chart(gfig, use_container_width=True)
+        st.caption("🟢 80点以上: 最高　🟡 60〜79点: 良好　🟠 40〜59点: 注意　🔴 39点以下: 困難")
+
     today = ensemble_df["time"].dt.date.min()
 
     for i, tab in enumerate(tabs[:4]):
@@ -775,65 +831,6 @@ if forecast_btn and lat:
         fig.update_yaxes(gridcolor="#333", showgrid=True)
 
         st.plotly_chart(fig, use_container_width=True)
-
-    # --- ゴルフ適性スコア ---
-    st.divider()
-    st.markdown("### 🏌️ ゴルフ適性スコア（1時間ごと）")
-
-    def golf_score(row):
-        score = 100
-
-        # 降水確率（最重要・強めに効かせる）
-        pp = row.get("precipitation_probability", 0) or 0
-        if pp >= 80:   score -= 60
-        elif pp >= 60: score -= 40
-        elif pp >= 40: score -= 20
-        elif pp >= 20: score -= 10
-
-        # 実降水量（実際に降っている雨は追加減点）
-        pr = row.get("precipitation", 0) or 0
-        if pr >= 5:    score -= 30  # 強雨
-        elif pr >= 2:  score -= 20  # 雨
-        elif pr >= 0.5: score -= 10  # 小雨
-
-        # 風速（4m/sから減点開始）
-        ws = row.get("windspeed_10m", 0) or 0
-        if ws >= 12:   score -= 45
-        elif ws >= 8:  score -= 30
-        elif ws >= 6:  score -= 15
-        elif ws >= 4:  score -= 8
-
-        # 気温
-        t = row.get("temperature_2m", 20) or 20
-        if 16 <= t <= 26:  score += 5
-        elif t < 5 or t > 35: score -= 25
-        elif t < 10 or t > 32: score -= 12
-
-        return max(0, min(100, score))
-
-    today_df = ensemble_df[ensemble_df["time"].dt.date == today].copy()
-    today_df["ゴルフ適性"] = today_df.apply(golf_score, axis=1)
-    today_df["時刻"] = today_df["time"].dt.strftime("%H:%M")
-    today_df["スコア"] = today_df["ゴルフ適性"].fillna(0).round(0).astype(int)
-    today_df["評価"] = today_df["スコア"].apply(
-        lambda s: "🟢 最高" if s >= 80 else ("🟡 良好" if s >= 60 else ("🟠 注意" if s >= 40 else "🔴 困難"))
-    )
-
-    golf_fig = go.Figure(go.Bar(
-        x=today_df["時刻"],
-        y=today_df["スコア"],
-        marker_color=today_df["スコア"].apply(
-            lambda s: "#2dc653" if s >= 80 else ("#ffd166" if s >= 60 else ("#f4a261" if s >= 40 else "#e63946"))
-        ),
-        text=today_df["評価"],
-        textposition="outside",
-    ))
-    golf_fig.update_layout(
-        height=300, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-        font=dict(color="white"), yaxis=dict(range=[0, 110]),
-        xaxis_title="時刻", yaxis_title="ゴルフ適性スコア",
-    )
-    st.plotly_chart(golf_fig, use_container_width=True)
 
     st.caption(f"🔄 データ更新: {datetime.now().strftime('%Y-%m-%d %H:%M')} | 使用モデル数: {sum(1 for s in model_status.values() if '✅' in s)}/{len(model_status)}")
 
