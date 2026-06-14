@@ -87,7 +87,7 @@ def _overpass_query(query: str) -> list:
         "https://lz4.overpass-api.de/api/interpreter",
     ]:
         try:
-            r = requests.post(endpoint, data={"data": query}, timeout=25,
+            r = requests.post(endpoint, data={"data": query}, timeout=12,
                               headers={"User-Agent": "golf-weather-app/1.0"})
             if r.status_code == 200:
                 return r.json().get("elements", [])
@@ -193,52 +193,60 @@ def search_golf_courses(keyword: str):
     """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。
     地域名（市区町村）が入力された場合はその周辺のゴルフ場を一覧表示。"""
 
-    results = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     seen_names = set()
     seen_coords = set()
+    all_elements = []
 
-    # --- 1. Overpass APIでゴルフ場名を部分一致検索 ---
-    elements = _overpass_search(keyword)
-    results.extend(_parse_overpass_elements(elements, seen_names, seen_coords))
+    # 名前検索とエリア検索を並列実行
+    def area_search():
+        info = _geocode_area(keyword)
+        if info:
+            return _overpass_search_area(info["lat"], info["lon"], radius_km=40)
+        return []
 
-    # --- 2. 地域名として解釈してエリア内のゴルフ場を検索 ---
-    area_info = _geocode_area(keyword)
-    if area_info:
-        area_elements = _overpass_search_area(area_info["lat"], area_info["lon"], radius_km=40)
-        results.extend(_parse_overpass_elements(area_elements, seen_names, seen_coords))
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_name = ex.submit(_overpass_search, keyword)
+        f_area = ex.submit(area_search)
+        for f in as_completed([f_name, f_area]):
+            try:
+                all_elements.extend(f.result())
+            except Exception:
+                pass
 
-    # --- 3. Overpassで結果が少ない場合はNominatimで補完 ---
+    results = _parse_overpass_elements(all_elements, seen_names, seen_coords)
+
+    # Overpassで結果が少ない場合のみNominatimで補完（1クエリのみ）
     if len(results) < 3:
-        for q in [f"{keyword} ゴルフ", f"{keyword} golf"]:
-            for item in _nominatim_search(q):
-                item_type = item.get("type", "")
-                et = item.get("extratags") or {}
-                display = item.get("display_name", "").lower()
-                is_golf = (
-                    item_type in ("golf_course", "golf")
-                    or et.get("leisure") == "golf_course"
-                    or ("golf" in display)
-                )
-                if not is_golf:
-                    continue
-                name = item.get("name") or display.split(",")[0]
-                if not name or name in seen_names:
-                    continue
-                lat_r = round(float(item["lat"]), 3)
-                lon_r = round(float(item["lon"]), 3)
-                if (lat_r, lon_r) in seen_coords:
-                    continue
-                seen_names.add(name)
-                seen_coords.add((lat_r, lon_r))
-                addr_obj = item.get("address", {})
-                addr_parts = [
-                    addr_obj.get("state", "") or addr_obj.get("province", ""),
-                    addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
-                ]
-                addr = " ".join(p for p in addr_parts if p) or "住所不明"
-                results.append({"name": name, "lat": float(item["lat"]),
-                                 "lon": float(item["lon"]), "address": addr})
-            time.sleep(0.3)
+        for item in _nominatim_search(f"{keyword} ゴルフ"):
+            item_type = item.get("type", "")
+            et = item.get("extratags") or {}
+            display = item.get("display_name", "").lower()
+            is_golf = (
+                item_type in ("golf_course", "golf")
+                or et.get("leisure") == "golf_course"
+                or "golf" in display
+            )
+            if not is_golf:
+                continue
+            name = item.get("name") or display.split(",")[0]
+            if not name or name in seen_names:
+                continue
+            lat_r = round(float(item["lat"]), 3)
+            lon_r = round(float(item["lon"]), 3)
+            if (lat_r, lon_r) in seen_coords:
+                continue
+            seen_names.add(name)
+            seen_coords.add((lat_r, lon_r))
+            addr_obj = item.get("address", {})
+            addr_parts = [
+                addr_obj.get("state", "") or addr_obj.get("province", ""),
+                addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
+            ]
+            results.append({"name": name, "lat": float(item["lat"]),
+                             "lon": float(item["lon"]),
+                             "address": " ".join(p for p in addr_parts if p) or "住所不明"})
 
     results.sort(key=lambda x: x["name"])
     return results
