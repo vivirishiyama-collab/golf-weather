@@ -597,7 +597,7 @@ if forecast_btn and lat:
                 xaxis=dict(range=[0, max(w_vals) * 1.3]),
                 margin=dict(l=10, r=40, t=10, b=10),
             )
-            st.plotly_chart(wfig, use_container_width=True)
+            st.plotly_chart(wfig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
             st.caption("※ 過去3日間の気温予報 vs 実測値（MAE）をもとに自動計算")
 
     # --- 今日・明日・明後日タブ ---
@@ -654,7 +654,7 @@ if forecast_btn and lat:
                 for c, v in r.items()
             ) + "</tr>"
         header_html = "".join(
-            f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap">{c}</th>'
+            f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;top:0;z-index:2">{c}</th>'
             for c in cols_show
         )
         st.markdown(f"""
@@ -720,7 +720,7 @@ if forecast_btn and lat:
         )
         gfig.update_xaxes(gridcolor="#333")
         gfig.update_yaxes(gridcolor="#333")
-        st.plotly_chart(gfig, use_container_width=True)
+        st.plotly_chart(gfig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
         st.caption("🟢 80点以上: 最高　🟡 60〜79点: 良好　🟠 40〜59点: 注意　🔴 39点以下: 困難")
 
     today = ensemble_df["time"].dt.date.min()
@@ -805,7 +805,7 @@ if forecast_btn and lat:
         fig.update_xaxes(gridcolor="#333", showgrid=True)
         fig.update_yaxes(gridcolor="#333", showgrid=True)
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
 
     st.caption(f"🔄 データ更新: {datetime.now().strftime('%Y-%m-%d %H:%M')} | 使用モデル数: {sum(1 for s in model_status.values() if '✅' in s)}/{len(model_status)}")
 
