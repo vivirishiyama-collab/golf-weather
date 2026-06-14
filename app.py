@@ -78,19 +78,43 @@ WEATHER_CODE = {
 def get_weather_code_label(code):
     return WEATHER_CODE.get(int(code) if not np.isnan(code) else 0, f"コード{int(code)}")
 
-# ---- ゴルフ場名候補をNominatimで検索 ----
+# ---- ゴルフ場名候補を検索（Overpass API優先 → Nominatimフォールバック） ----
+
+def _overpass_search(keyword: str) -> list:
+    """Overpass APIでleisure=golf_courseタグを持つ施設をキーワード部分一致検索"""
+    # 名前フィールドへの正規表現マッチ（大文字小文字無視）
+    escaped = keyword.replace('"', '\\"')
+    query = f"""
+[out:json][timeout:20];
+(
+  node["leisure"="golf_course"]["name"~"{escaped}",i];
+  way["leisure"="golf_course"]["name"~"{escaped}",i];
+  relation["leisure"="golf_course"]["name"~"{escaped}",i];
+  node["golf"="course"]["name"~"{escaped}",i];
+  way["golf"="course"]["name"~"{escaped}",i];
+);
+out center 50;
+"""
+    for endpoint in [
+        "https://overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
+    ]:
+        try:
+            r = requests.post(endpoint, data={"data": query}, timeout=25,
+                              headers={"User-Agent": "golf-weather-app/1.0"})
+            if r.status_code == 200:
+                return r.json().get("elements", [])
+        except Exception:
+            continue
+    return []
+
 def _nominatim_search(query: str) -> list:
-    """Nominatim に1クエリ投げてゴルフ場リストを返す"""
+    """Nominatim に1クエリ投げてゴルフ場リストを返す（フォールバック用）"""
     try:
         r = requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": query,
-                "format": "jsonv2",
-                "limit": 30,
-                "extratags": 1,
-                "addressdetails": 1,
-            },
+            params={"q": query, "format": "jsonv2", "limit": 20,
+                    "extratags": 1, "addressdetails": 1},
             headers={"User-Agent": "golf-weather-app/1.0 (r.ishiyama73@gmail.com)"},
             timeout=15,
         )
@@ -101,70 +125,70 @@ def _nominatim_search(query: str) -> list:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def search_golf_courses(keyword: str):
-    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。
-    日英両方のクエリを投げて結果をマージする。"""
-
-    # 日英複数クエリ（「ゴルフ場」「ゴルフクラブ」「golf course」「golf club」を付与）
-    queries = [
-        f"{keyword} ゴルフ場",
-        f"{keyword} ゴルフクラブ",
-        f"{keyword} golf course",
-        f"{keyword} golf club",
-        keyword,
-    ]
-
-    raw = []
-    seen_queries = set()
-    for q in queries:
-        if q in seen_queries:
-            continue
-        seen_queries.add(q)
-        raw.extend(_nominatim_search(q))
-        time.sleep(0.3)  # Nominatim利用規約：1req/秒以下
+    """キーワードに部分一致するゴルフ場をOSMから検索し、候補リストを返す。"""
 
     results = []
     seen_names = set()
     seen_coords = set()
-    for item in raw:
-        # golf_courseタイプ、またはdisplay_nameに"golf"を含むものに絞り込み
-        item_type = item.get("type", "")
-        display = item.get("display_name", "").lower()
-        et = item.get("extratags") or {}
-        is_golf = (
-            item_type in ("golf_course", "golf")
-            or et.get("leisure") == "golf_course"
-            or ("golf" in display and item_type in ("", "yes", "leisure", "club"))
-        )
-        if not is_golf:
-            continue
 
-        name = item.get("name") or display.split(",")[0]
+    # --- 1. Overpass APIで直接ゴルフ場タグを検索（最も精度が高い） ---
+    elements = _overpass_search(keyword)
+    for el in elements:
+        tags = el.get("tags", {})
+        name = tags.get("name") or tags.get("name:ja") or tags.get("name:en")
         if not name or name in seen_names:
             continue
-
-        # 座標が近すぎる重複を除外（同一施設の別ノード）
-        lat_r = round(float(item["lat"]), 3)
-        lon_r = round(float(item["lon"]), 3)
-        coord_key = (lat_r, lon_r)
-        if coord_key in seen_coords:
+        lat = el.get("lat") or (el.get("center", {}).get("lat"))
+        lon = el.get("lon") or (el.get("center", {}).get("lon"))
+        if lat is None or lon is None:
             continue
-
+        lat_r = round(float(lat), 3)
+        lon_r = round(float(lon), 3)
+        if (lat_r, lon_r) in seen_coords:
+            continue
         seen_names.add(name)
-        seen_coords.add(coord_key)
-
-        addr_obj = item.get("address", {})
+        seen_coords.add((lat_r, lon_r))
         addr_parts = [
-            addr_obj.get("country", ""),
-            addr_obj.get("state", "") or addr_obj.get("province", ""),
-            addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
+            tags.get("addr:country", "日本"),
+            tags.get("addr:province", "") or tags.get("addr:state", ""),
+            tags.get("addr:city", "") or tags.get("addr:county", ""),
         ]
         addr = " ".join(p for p in addr_parts if p) or "住所不明"
-        results.append({
-            "name": name,
-            "lat": float(item["lat"]),
-            "lon": float(item["lon"]),
-            "address": addr,
-        })
+        results.append({"name": name, "lat": float(lat), "lon": float(lon), "address": addr})
+
+    # --- 2. Overpassで結果が少ない場合はNominatimで補完 ---
+    if len(results) < 3:
+        for q in [f"{keyword} ゴルフ", f"{keyword} golf"]:
+            for item in _nominatim_search(q):
+                item_type = item.get("type", "")
+                et = item.get("extratags") or {}
+                display = item.get("display_name", "").lower()
+                is_golf = (
+                    item_type in ("golf_course", "golf")
+                    or et.get("leisure") == "golf_course"
+                    or ("golf" in display)
+                )
+                if not is_golf:
+                    continue
+                name = item.get("name") or display.split(",")[0]
+                if not name or name in seen_names:
+                    continue
+                lat_r = round(float(item["lat"]), 3)
+                lon_r = round(float(item["lon"]), 3)
+                if (lat_r, lon_r) in seen_coords:
+                    continue
+                seen_names.add(name)
+                seen_coords.add((lat_r, lon_r))
+                addr_obj = item.get("address", {})
+                addr_parts = [
+                    addr_obj.get("country", ""),
+                    addr_obj.get("state", "") or addr_obj.get("province", ""),
+                    addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", ""),
+                ]
+                addr = " ".join(p for p in addr_parts if p) or "住所不明"
+                results.append({"name": name, "lat": float(item["lat"]),
+                                 "lon": float(item["lon"]), "address": addr})
+            time.sleep(0.3)
 
     results.sort(key=lambda x: x["name"])
     return results
