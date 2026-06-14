@@ -480,17 +480,23 @@ if "candidates" not in st.session_state:
     st.session_state.candidates = []
 
 col1, col2 = st.columns([3, 1])
+def _do_search():
+    kw = st.session_state.keyword_input
+    if kw and len(kw) >= 2:
+        st.session_state.candidates = search_places(kw)
+
 with col1:
     keyword = st.text_input(
         "ゴルフ場名・住所・市区町村名を入力",
         placeholder="例: オーク・ヒルズCC、成田市、千葉県富里市十倉、Pebble Beach",
         label_visibility="collapsed",
         key="keyword_input",
+        on_change=_do_search,
     )
 with col2:
     search_btn = st.button("🔍 候補を検索", type="secondary", use_container_width=True)
 
-# ボタン押下時のみ検索（自動検索は廃止してレスポンス向上）
+# ボタン押下でも検索
 if search_btn and keyword and len(keyword) >= 2:
     with st.spinner(f"「{keyword}」を検索中..."):
         st.session_state.candidates = search_places(keyword)
