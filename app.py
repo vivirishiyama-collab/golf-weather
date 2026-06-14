@@ -704,7 +704,7 @@ if forecast_btn and lat:
         )
         st.markdown(f"""
 <div style="overflow-x:auto">
-<table style="width:100%;border-collapse:collapse;font-size:13px;color:#eee">
+<table style="width:100%;border-collapse:collapse;font-size:13px;color:inherit">
 <thead><tr>{header_html}</tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
