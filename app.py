@@ -647,16 +647,24 @@ if forecast_btn and lat:
         cols_show = ["時刻", "天気", "気温(°C)", "降水確率(%)", "降水量(mm)", "風速(m/s)", "コメント"]
         rows_html = ""
         for _, r in display_df[cols_show].iterrows():
-            rows_html += "<tr>" + "".join(
-                f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #333">{v}</td>'
-                if c != "コメント"
-                else f'<td style="padding:6px 10px;border-bottom:1px solid #333;min-width:300px">{v}</td>'
-                for c, v in r.items()
-            ) + "</tr>"
-        header_html = "".join(
-            f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;top:0;z-index:2">{c}</th>'
-            for c in cols_show
-        )
+            cells = []
+            for i, (c, v) in enumerate(r.items()):
+                if i == 0:  # 時刻列を横スクロール時に固定
+                    cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd;position:sticky;left:0;background:inherit;z-index:1;font-weight:bold">{v}</td>')
+                elif c != "コメント":
+                    cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd">{v}</td>')
+                else:
+                    cells.append(f'<td style="padding:6px 10px;border-bottom:1px solid #ddd;min-width:200px">{v}</td>')
+            rows_html += "<tr>" + "".join(cells) + "</tr>"
+
+        header_cells = []
+        for i, c in enumerate(cols_show):
+            if i == 0:  # 時刻ヘッダーも固定
+                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;left:0;z-index:3">{c}</th>')
+            else:
+                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap">{c}</th>')
+        header_html = "".join(header_cells)
+
         st.markdown(f"""
 <div style="overflow-x:auto">
 <table style="width:100%;border-collapse:collapse;font-size:13px;color:inherit">
