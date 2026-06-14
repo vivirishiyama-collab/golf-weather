@@ -689,14 +689,27 @@ if forecast_btn and lat:
         display_df["風速(m/s)"] = display_df["windspeed_10m"].round(1)
         display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
 
-        row_count = len(display_df)
-        st.dataframe(
-            display_df[["時刻", "天気", "気温(°C)", "降水確率(%)", "降水量(mm)", "風速(m/s)", "コメント"]],
-            use_container_width=True,
-            hide_index=True,
-            height=35 * row_count + 38,  # 全行を1画面に表示
-            column_config={"コメント": st.column_config.TextColumn(width="large", max_chars=None)},
+        cols_show = ["時刻", "天気", "気温(°C)", "降水確率(%)", "降水量(mm)", "風速(m/s)", "コメント"]
+        rows_html = ""
+        for _, r in display_df[cols_show].iterrows():
+            rows_html += "<tr>" + "".join(
+                f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #333">{v}</td>'
+                if c != "コメント"
+                else f'<td style="padding:6px 10px;border-bottom:1px solid #333;min-width:300px">{v}</td>'
+                for c, v in r.items()
+            ) + "</tr>"
+        header_html = "".join(
+            f'<th style="padding:6px 10px;background:#1e3a2f;text-align:left;white-space:nowrap">{c}</th>'
+            for c in cols_show
         )
+        st.markdown(f"""
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px;color:#eee">
+<thead><tr>{header_html}</tr></thead>
+<tbody>{rows_html}</tbody>
+</table>
+</div>
+""", unsafe_allow_html=True)
 
         # ゴルフ適性スコア（天気スコアのみ）
         st.markdown("#### 🏌️ ゴルフ適性スコア")
