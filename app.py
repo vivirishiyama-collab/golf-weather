@@ -15,21 +15,40 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---- スタイル ----
+# ---- スタイル（スマホ対応） ----
 st.markdown("""
 <style>
 body { font-family: 'Hiragino Sans', sans-serif; }
-.metric-card {
-    background: linear-gradient(135deg, #1a3a2a 0%, #2d6a4f 100%);
-    border-radius: 12px; padding: 16px; color: white; text-align: center;
-    margin: 4px;
+
+/* メトリクスカードをスマホで折り返す */
+.summary-grid {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
 }
-.metric-val { font-size: 28px; font-weight: bold; }
-.metric-label { font-size: 12px; opacity: 0.8; }
-.accuracy-badge {
-    background: #f0a500; color: #000; border-radius: 20px;
-    padding: 4px 14px; font-size: 13px; font-weight: bold;
-    display: inline-block; margin-bottom: 8px;
+.summary-card {
+    background: #1e3a2f; border-radius: 10px; padding: 12px 16px;
+    flex: 1 1 120px; min-width: 100px; text-align: center; color: white;
+}
+.summary-card .val { font-size: 22px; font-weight: bold; }
+.summary-card .lbl { font-size: 11px; opacity: 0.75; margin-top: 2px; }
+
+/* 的中率バナー */
+.acc-banner {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    background: #111; border-radius: 12px; padding: 14px; margin-bottom: 16px;
+}
+.acc-card {
+    flex: 1 1 130px; text-align: center; border-radius: 10px; padding: 12px;
+    color: white;
+}
+.acc-card .big { font-size: 32px; font-weight: bold; }
+.acc-card .sub { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+
+/* テーブルの横スクロールをスマホで有効に */
+[data-testid="stDataFrame"] { overflow-x: auto !important; }
+
+/* サイドバー非表示時の余白調整 */
+@media (max-width: 768px) {
+    .block-container { padding-left: 12px !important; padding-right: 12px !important; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -579,22 +598,27 @@ if forecast_btn and lat:
 
     # --- 的中率バナー ---
     if acc:
-        st.markdown("### 📊 このゴルフ場における予報的中率（過去7日間実績）")
-        a1, a2, a3, a4 = st.columns(4)
+        st.markdown("### 📊 予報的中率（過去7日間の実績）")
         score_color = "#2dc653" if acc["overall"] >= 80 else ("#ffd166" if acc["overall"] >= 65 else "#e63946")
-        a1.markdown(f"""
-        <div style='background:{score_color};border-radius:12px;padding:16px;text-align:center;color:#000'>
-        <div style='font-size:13px;font-weight:bold'>総合的中率</div>
-        <div style='font-size:38px;font-weight:bold'>{acc["overall"]:.1f}%</div>
-        </div>""", unsafe_allow_html=True)
-        a2.metric("🌡️ 気温的中率", f"{acc['temp_hit']:.1f}%",
-                  help="予報と実測の差が±2°C以内だった割合")
-        a2.caption(f"平均誤差: ±{acc['temp_mae']:.1f}°C")
-        if acc["precip_hit"] is not None:
-            a3.metric("🌧️ 降水的中率", f"{acc['precip_hit']:.1f}%",
-                      help="雨予報(確率50%以上)と実際の降雨(0.5mm以上)の一致率")
-        a4.metric("📅 検証期間", f"過去{acc['days']}日間",
-                  help=f"計{acc['hours']}時間分のデータで検証")
+        precip_card = f'<div class="acc-card" style="background:#1a3a5c"><div class="big">{acc["precip_hit"]:.1f}%</div><div class="sub">🌧️ 降水的中率</div></div>' if acc["precip_hit"] is not None else ""
+        st.markdown(f"""
+<div class="acc-banner">
+  <div class="acc-card" style="background:{score_color};color:#000;flex:1 1 160px">
+    <div class="big">{acc["overall"]:.1f}%</div>
+    <div class="sub" style="color:#000">総合的中率</div>
+  </div>
+  <div class="acc-card" style="background:#1a3a2f">
+    <div class="big">{acc["temp_hit"]:.1f}%</div>
+    <div class="sub">🌡️ 気温的中率（±2°C以内）</div>
+    <div class="sub">平均誤差 ±{acc["temp_mae"]:.1f}°C</div>
+  </div>
+  {precip_card}
+  <div class="acc-card" style="background:#2a2a2a">
+    <div class="big">{acc["days"]}日間</div>
+    <div class="sub">📅 検証期間（計{acc["hours"]}h）</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
         st.divider()
 
     # モデル取得状況 + 精度重みグラフ
@@ -633,16 +657,17 @@ if forecast_btn and lat:
 
         # サマリー指標
         st.markdown(f"### {title}")
-        m_cols = st.columns(5)
-        metrics = [
-            ("🌡️ 最高気温", f"{df_day['temperature_2m'].max():.1f}°C"),
-            ("🌡️ 最低気温", f"{df_day['temperature_2m'].min():.1f}°C"),
-            ("🌧️ 最大降水確率", f"{df_day['precipitation_probability'].max():.0f}%"),
-            ("💨 最大風速", f"{df_day['windspeed_10m'].max():.1f} m/s"),
-            ("☔ 総降水量", f"{df_day['precipitation'].sum():.1f} mm"),
-        ]
-        for col, (label, val) in zip(m_cols, metrics):
-            col.metric(label, val)
+        cards_html = "".join([
+            f'<div class="summary-card"><div class="val">{v}</div><div class="lbl">{l}</div></div>'
+            for l, v in [
+                ("最高気温", f"{df_day['temperature_2m'].max():.1f}°C"),
+                ("最低気温", f"{df_day['temperature_2m'].min():.1f}°C"),
+                ("最大降水確率", f"{df_day['precipitation_probability'].max():.0f}%"),
+                ("最大風速", f"{df_day['windspeed_10m'].max():.1f} m/s"),
+                ("総降水量", f"{df_day['precipitation'].sum():.1f} mm"),
+            ]
+        ])
+        st.markdown(f'<div class="summary-grid">{cards_html}</div>', unsafe_allow_html=True)
 
         # 1時間ごとテーブル
         def to_int_safe(s):
@@ -694,7 +719,7 @@ if forecast_btn and lat:
         st.markdown("### 7日間 1時間ごと推移グラフ")
 
         fig = make_subplots(
-            rows=4, cols=1,
+            rows=3, cols=1,
             shared_xaxes=True,
             vertical_spacing=0.06,
             subplot_titles=(
