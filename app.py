@@ -699,7 +699,7 @@ if forecast_btn and lat:
                 for c, v in r.items()
             ) + "</tr>"
         header_html = "".join(
-            f'<th style="padding:6px 10px;background:#1e3a2f;text-align:left;white-space:nowrap">{c}</th>'
+            f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap">{c}</th>'
             for c in cols_show
         )
         st.markdown(f"""
