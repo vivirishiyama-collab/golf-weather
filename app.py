@@ -782,21 +782,32 @@ if forecast_btn and lat:
 
     def golf_score(row):
         score = 100
-        # 降水確率
-        score -= row.get("precipitation_probability", 0) * 0.5
-        # 風速ペナルティ
-        ws = row.get("windspeed_10m", 0)
-        if ws > 10: score -= 30
-        elif ws > 7: score -= 15
-        elif ws > 5: score -= 5
-        # 雲量（少し曇りが良い）
-        cc = row.get("cloudcover", 50)
-        if cc < 30: score += 5  # 快晴は暑い
-        elif cc > 80: score -= 10
+
+        # 降水確率（最重要・強めに効かせる）
+        pp = row.get("precipitation_probability", 0) or 0
+        if pp >= 80:   score -= 60
+        elif pp >= 60: score -= 40
+        elif pp >= 40: score -= 20
+        elif pp >= 20: score -= 10
+
+        # 実降水量（実際に降っている雨は追加減点）
+        pr = row.get("precipitation", 0) or 0
+        if pr >= 5:    score -= 30  # 強雨
+        elif pr >= 2:  score -= 20  # 雨
+        elif pr >= 0.5: score -= 10  # 小雨
+
+        # 風速
+        ws = row.get("windspeed_10m", 0) or 0
+        if ws >= 12:   score -= 35
+        elif ws >= 8:  score -= 20
+        elif ws >= 5:  score -= 8
+
         # 気温
-        t = row.get("temperature_2m", 20)
-        if 15 <= t <= 28: score += 5
-        elif t < 5 or t > 35: score -= 20
+        t = row.get("temperature_2m", 20) or 20
+        if 16 <= t <= 26:  score += 5   # 理想的
+        elif t < 5 or t > 35: score -= 25
+        elif t < 10 or t > 32: score -= 12
+
         return max(0, min(100, score))
 
     today_df = ensemble_df[ensemble_df["time"].dt.date == today].copy()
