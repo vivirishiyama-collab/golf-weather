@@ -46,6 +46,15 @@ body { font-family: 'Hiragino Sans', sans-serif; }
 /* テーブルの横スクロールをスマホで有効に */
 [data-testid="stDataFrame"] { overflow-x: auto !important; }
 
+/* 日付タブを上部に固定 */
+[data-testid="stTabs"] > div:first-child {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: white;
+    padding-bottom: 4px;
+}
+
 /* サイドバー非表示時の余白調整 */
 @media (max-width: 768px) {
     .block-container { padding-left: 12px !important; padding-right: 12px !important; }
@@ -658,7 +667,7 @@ if forecast_btn and lat:
             for c in cols_show
         )
         st.markdown(f"""
-<div style="overflow-x:auto">
+<div style="overflow-x:auto;overflow-y:auto;max-height:520px">
 <table style="width:100%;border-collapse:collapse;font-size:13px;color:inherit">
 <thead><tr>{header_html}</tr></thead>
 <tbody>{rows_html}</tbody>
