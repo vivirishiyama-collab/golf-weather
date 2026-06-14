@@ -695,17 +695,19 @@ if forecast_btn and lat:
             use_container_width=True,
             hide_index=True,
             height=35 * row_count + 38,  # 全行を1画面に表示
-            column_config={"コメント": st.column_config.TextColumn(width="large")},
+            column_config={"コメント": st.column_config.TextColumn(width="large", max_chars=None)},
         )
 
-        # ゴルフ適性スコア 2軸グラフ（天気 & 風）
-        st.markdown("#### 🏌️ ゴルフ適性スコア（天気・風の2軸）")
+        # ゴルフ適性スコア（天気スコアのみ）
+        st.markdown("#### 🏌️ ゴルフ適性スコア")
         score_df = display_df.copy()
 
-        def rain_score(row):
+        def calc_score(row):
             s = 100
             pp = row.get("降水確率(%)", 0) or 0
             pr = row.get("降水量(mm)", 0) or 0
+            ws = row.get("風速(m/s)", 0) or 0
+            t  = row.get("気温(°C)", 20) or 20
             if pp >= 80:    s -= 60
             elif pp >= 60:  s -= 40
             elif pp >= 40:  s -= 20
@@ -713,52 +715,41 @@ if forecast_btn and lat:
             if pr >= 5:     s -= 30
             elif pr >= 2:   s -= 20
             elif pr >= 0.5: s -= 10
-            t = row.get("気温(°C)", 20) or 20
-            if 16 <= t <= 26:    s += 5
-            elif t < 5 or t > 35: s -= 25
+            if ws >= 12:    s -= 45
+            elif ws >= 8:   s -= 30
+            elif ws >= 6:   s -= 15
+            elif ws >= 4:   s -= 8
+            if 16 <= t <= 26:      s += 5
+            elif t < 5 or t > 35:  s -= 25
             elif t < 10 or t > 32: s -= 12
             return max(0, min(100, s))
 
-        def wind_score(row):
-            s = 100
-            ws = row.get("風速(m/s)", 0) or 0
-            if ws >= 12:   s -= 60
-            elif ws >= 8:  s -= 40
-            elif ws >= 6:  s -= 20
-            elif ws >= 4:  s -= 10
-            return max(0, min(100, s))
+        score_df["スコア"] = score_df.apply(calc_score, axis=1).astype(int)
 
-        score_df["天気スコア"] = score_df.apply(rain_score, axis=1).astype(int)
-        score_df["風スコア"]   = score_df.apply(wind_score, axis=1).astype(int)
-
-        gfig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                             subplot_titles=("🌧️ 天気スコア（雨・気温）", "💨 風スコア"),
-                             vertical_spacing=0.12)
         def bar_colors(vals):
             return ["#2dc653" if v >= 80 else "#ffd166" if v >= 60 else "#f4a261" if v >= 40 else "#e63946" for v in vals]
 
-        gfig.add_trace(go.Bar(x=score_df["時刻"], y=score_df["天気スコア"],
-            marker_color=bar_colors(score_df["天気スコア"]),
-            text=score_df["天気スコア"], textposition="outside"), row=1, col=1)
-        gfig.add_trace(go.Bar(x=score_df["時刻"], y=score_df["風スコア"],
-            marker_color=bar_colors(score_df["風スコア"]),
-            text=score_df["風スコア"], textposition="outside"), row=2, col=1)
-        n_hours = len(score_df)
+        gfig = go.Figure(go.Bar(
+            x=score_df["時刻"],
+            y=score_df["スコア"],
+            marker_color=bar_colors(score_df["スコア"]),
+            text=score_df["スコア"],
+            textposition="outside",
+        ))
         gfig.update_layout(
-            height=500, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            height=320, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
             font=dict(color="white"), showlegend=False,
-            yaxis=dict(range=[0, 120]), yaxis2=dict(range=[0, 120]),
-            margin=dict(t=30, b=10),
+            yaxis=dict(range=[0, 120]),
+            xaxis=dict(
+                tickmode="array",
+                tickvals=score_df["時刻"].tolist(),
+                ticktext=score_df["時刻"].tolist(),
+                tickangle=-45,
+            ),
+            margin=dict(t=20, b=60),
             bargap=0.15,
         )
-        gfig.update_xaxes(
-            gridcolor="#333",
-            tickmode="array",
-            tickvals=list(range(n_hours)),
-            ticktext=score_df["時刻"].tolist(),
-            tickangle=-45,
-            nticks=n_hours,
-        )
+        gfig.update_xaxes(gridcolor="#333")
         gfig.update_yaxes(gridcolor="#333")
         st.plotly_chart(gfig, use_container_width=True)
         st.caption("🟢 80点以上: 最高　🟡 60〜79点: 良好　🟠 40〜59点: 注意　🔴 39点以下: 困難")
