@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from geopy.geocoders import Nominatim
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import time
 
@@ -257,34 +258,129 @@ def compute_model_weights(lat, lon, models_to_use: tuple):
     total = sum(weights.values())
     return {k: v / total * len(weights) for k, v in weights.items()}
 
-# ---- 複数モデルを加重アンサンブル集計 ----
+# ---- 時間帯別ゴルフコメント生成 ----
+def generate_hourly_comment(row) -> str:
+    hour = row["time"].hour
+    temp = row.get("temperature_2m", np.nan)
+    feel = row.get("apparent_temperature", np.nan)
+    precip_prob = row.get("precipitation_probability", 0) or 0
+    precip = row.get("precipitation", 0) or 0
+    wind = row.get("windspeed_10m", 0) or 0
+    cloud = row.get("cloudcover", 50) or 50
+    wcode = int(row.get("weathercode", 0) or 0)
+
+    parts = []
+
+    # 時間帯の挨拶
+    if hour < 6:
+        parts.append("夜明け前のスタート")
+    elif hour < 9:
+        parts.append("朝の爽やかな時間帯")
+    elif hour < 12:
+        parts.append("午前のプレーに最適な時間")
+    elif hour < 14:
+        parts.append("日差しが最も強い昼時")
+    elif hour < 17:
+        parts.append("午後の時間帯")
+    else:
+        parts.append("夕方のラウンド")
+
+    # 気温コメント
+    if not np.isnan(temp):
+        if temp >= 35:
+            parts.append(f"気温{temp:.0f}°Cと猛暑。熱中症に厳重注意、こまめな水分補給を")
+        elif temp >= 30:
+            parts.append(f"気温{temp:.0f}°Cと真夏日。水分・塩分補給をこまめに")
+        elif temp >= 25:
+            parts.append(f"気温{temp:.0f}°Cと暑め。日焼け対策と水分補給を忘れずに")
+        elif temp >= 18:
+            parts.append(f"気温{temp:.0f}°Cと快適なプレー日和")
+        elif temp >= 10:
+            parts.append(f"気温{temp:.0f}°Cとやや肌寒め。ウィンドブレーカーが活躍")
+        else:
+            parts.append(f"気温{temp:.0f}°Cと寒い。重ね着で防寒対策を")
+
+    # 体感気温が気温と大きく違う場合
+    if not np.isnan(feel) and not np.isnan(temp) and abs(feel - temp) >= 4:
+        if feel < temp:
+            parts.append(f"風で体感は{feel:.0f}°Cまで下がる")
+        else:
+            parts.append(f"湿度で体感は{feel:.0f}°Cと蒸し暑く感じる")
+
+    # 降水コメント
+    if precip_prob >= 80:
+        parts.append(f"降水確率{precip_prob:.0f}%と雨がほぼ確実。カッパ必携")
+    elif precip_prob >= 60:
+        parts.append(f"降水確率{precip_prob:.0f}%。傘・カッパを必ず用意して")
+    elif precip_prob >= 40:
+        parts.append(f"降水確率{precip_prob:.0f}%。折りたたみ傘を念のため")
+    elif precip_prob >= 20:
+        parts.append(f"降水確率{precip_prob:.0f}%とにわか雨の可能性あり")
+
+    if precip >= 5:
+        parts.append(f"1時間に{precip:.1f}mmの強雨予想")
+    elif precip >= 1:
+        parts.append(f"降水量{precip:.1f}mm予想")
+
+    # 風コメント
+    if wind >= 12:
+        parts.append(f"風速{wind:.1f}m/sの強風。クラブ選択と弾道に要注意")
+    elif wind >= 8:
+        parts.append(f"風速{wind:.1f}m/sのやや強い風。アゲインスト・フォローを意識して")
+    elif wind >= 5:
+        parts.append(f"風速{wind:.1f}m/sの風あり。ショートゲームへの影響を考慮")
+    elif wind >= 3:
+        parts.append(f"微風({wind:.1f}m/s)でプレーしやすい")
+    else:
+        parts.append("ほぼ無風で狙いどおりのショットが期待できる")
+
+    # 雲量コメント
+    if cloud <= 20:
+        parts.append("快晴で視界良好")
+    elif cloud <= 50:
+        parts.append("晴れ間が広がり気持ちの良いラウンド")
+    elif cloud <= 80:
+        parts.append("曇りがちだが直射日光が遮られ逆に快適")
+    else:
+        parts.append("厚い雲に覆われ薄暗め")
+
+    return "。".join(parts) + "。"
+
+
+# ---- 複数モデルを加重アンサンブル集計（並列取得） ----
 def build_ensemble_df(lat, lon, models_to_use, use_weighted=True):
     all_dfs = []
     model_status = {}
 
-    # 精度ベースの重み計算（バックグラウンドで並行実行）
-    weights = {}
-    if use_weighted:
-        with st.spinner("過去実績から各モデルの精度を計算中..."):
-            weights = compute_model_weights(lat, lon, tuple(models_to_use.items()))
+    # 精度重み計算と全モデル取得を並列実行
+    with st.spinner("気象モデルを並列取得中..."):
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            # 重み計算
+            weight_future = ex.submit(
+                compute_model_weights, lat, lon, tuple(models_to_use.items())
+            ) if use_weighted else None
 
-    progress = st.progress(0, text="気象モデルを取得中...")
-    for i, (name, model_id) in enumerate(models_to_use.items()):
-        progress.progress((i + 1) / len(models_to_use), text=f"取得中: {name}")
-        data = fetch_model_forecast(lat, lon, model_id)
-        if data and "hourly" in data:
-            df = pd.DataFrame(data["hourly"])
-            df["time"] = pd.to_datetime(df["time"])
-            df["model"] = name
-            df["weight"] = weights.get(name, 1.0)
-            all_dfs.append(df)
-            w = weights.get(name, 1.0)
-            model_status[name] = f"✅ (精度重み: {w:.2f})"
-        else:
-            model_status[name] = "❌ (取得失敗)"
-        time.sleep(0.1)
+            # 全モデルを同時リクエスト
+            forecast_futures = {
+                ex.submit(fetch_model_forecast, lat, lon, model_id): name
+                for name, model_id in models_to_use.items()
+            }
 
-    progress.empty()
+            weights = weight_future.result() if weight_future else {n: 1.0 for n in models_to_use}
+
+            for future in as_completed(forecast_futures):
+                name = forecast_futures[future]
+                data = future.result()
+                if data and "hourly" in data:
+                    df = pd.DataFrame(data["hourly"])
+                    df["time"] = pd.to_datetime(df["time"])
+                    df["model"] = name
+                    df["weight"] = weights.get(name, 1.0)
+                    all_dfs.append(df)
+                    w = weights.get(name, 1.0)
+                    model_status[name] = f"✅ (精度重み: {w:.2f})"
+                else:
+                    model_status[name] = "❌ (取得失敗)"
 
     if not all_dfs:
         return None, model_status, {}
@@ -455,11 +551,16 @@ if forecast_btn and lat:
             col.metric(label, val)
 
         # 1時間ごとテーブル
-        display_df = df_day[["time", "temperature_2m", "apparent_temperature",
-                               "precipitation_probability", "precipitation",
-                               "windspeed_10m", "cloudcover", "weathercode"]].copy()
         def to_int_safe(s):
             return s.fillna(0).round(0).astype(int)
+
+        cols_needed = ["time", "temperature_2m", "apparent_temperature",
+                       "precipitation_probability", "precipitation",
+                       "windspeed_10m", "cloudcover", "weathercode"]
+        display_df = df_day[[c for c in cols_needed if c in df_day.columns]].copy()
+        for c in cols_needed:
+            if c not in display_df.columns:
+                display_df[c] = np.nan
 
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
         display_df["天気"] = display_df["weathercode"].fillna(0).apply(get_weather_code_label)
@@ -468,13 +569,15 @@ if forecast_btn and lat:
         display_df["降水確率(%)"] = to_int_safe(display_df["precipitation_probability"])
         display_df["降水量(mm)"] = display_df["precipitation"].fillna(0).round(1)
         display_df["風速(m/s)"] = display_df["windspeed_10m"].round(1)
-        display_df["雲量(%)"] = to_int_safe(display_df["cloudcover"]) if "cloudcover" in display_df.columns else "-"
+        display_df["雲量(%)"] = to_int_safe(display_df["cloudcover"])
+        display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
 
         st.dataframe(
             display_df[["時刻", "天気", "気温(°C)", "体感気温(°C)",
-                          "降水確率(%)", "降水量(mm)", "風速(m/s)", "雲量(%)"]],
+                          "降水確率(%)", "降水量(mm)", "風速(m/s)", "雲量(%)", "コメント"]],
             use_container_width=True,
             hide_index=True,
+            column_config={"コメント": st.column_config.TextColumn(width="large")},
         )
 
     today = ensemble_df["time"].dt.date.min()
