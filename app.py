@@ -147,7 +147,7 @@ def fetch_model_forecast(lat, lon, model_id):
             "visibility",
         ],
         "models": model_id,
-        "forecast_days": 7,
+        "forecast_days": 14,
         "timezone": "auto",
         "wind_speed_unit": "ms",
     }
@@ -603,7 +603,7 @@ if forecast_btn and lat:
     # --- 今日・明日・明後日タブ ---
     now = pd.Timestamp.now(tz=ensemble_df["time"].dt.tz).tz_convert(ensemble_df["time"].dt.tz) if ensemble_df["time"].dt.tz else pd.Timestamp.now()
 
-    tabs = st.tabs(["📅 今日", "📅 明日", "📅 明後日", "📆 3〜7日先", "📊 全期間グラフ"])
+    tabs = st.tabs(["📅 今日", "📅 明日", "📅 明後日", "📆 3〜7日先", "📆 8〜14日先", "📊 全期間グラフ"])
 
     def render_day_detail(df_day, title):
         if df_day.empty:
@@ -742,20 +742,34 @@ if forecast_btn and lat:
                 label = ["今日", "明日", "明後日"][i]
                 dow = WEEKDAYS[target_date.weekday()]
                 render_day_detail(day_df, f"{label} ({target_date.strftime('%m/%d')}・{dow})")
-            else:
+            elif i == 3:
                 # 3〜7日先
                 WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
                 start = today + timedelta(days=3)
-                future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
+                end = today + timedelta(days=7)
+                future_df = ensemble_df[(ensemble_df["time"].dt.date >= start) & (ensemble_df["time"].dt.date <= end)]
                 for date in sorted(future_df["time"].dt.date.unique()):
                     day_df = future_df[future_df["time"].dt.date == date]
                     dow = WEEKDAYS[date.weekday()]
                     render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）")
                     st.divider()
+            else:
+                # 8〜14日先
+                WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
+                start = today + timedelta(days=8)
+                future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
+                if future_df.empty:
+                    st.info("8日以降のデータがまだ取得できていません。")
+                else:
+                    for date in sorted(future_df["time"].dt.date.unique()):
+                        day_df = future_df[future_df["time"].dt.date == date]
+                        dow = WEEKDAYS[date.weekday()]
+                        render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）")
+                        st.divider()
 
     # --- 全期間グラフ ---
-    with tabs[4]:
-        st.markdown("### 7日間 1時間ごと推移グラフ")
+    with tabs[5]:
+        st.markdown("### 14日間 1時間ごと推移グラフ")
 
         fig = make_subplots(
             rows=3, cols=1,
