@@ -733,39 +733,39 @@ if forecast_btn and lat:
 
     today = ensemble_df["time"].dt.date.min()
 
-    for i, tab in enumerate(tabs[:4]):
-        with tab:
-            target_date = today + timedelta(days=i) if i < 3 else None
-            if i < 3:
-                day_df = ensemble_df[ensemble_df["time"].dt.date == target_date]
-                WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
-                label = ["今日", "明日", "明後日"][i]
-                dow = WEEKDAYS[target_date.weekday()]
-                render_day_detail(day_df, f"{label} ({target_date.strftime('%m/%d')}・{dow})")
-            elif i == 3:
-                # 3〜7日先
-                WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
-                start = today + timedelta(days=3)
-                end = today + timedelta(days=7)
-                future_df = ensemble_df[(ensemble_df["time"].dt.date >= start) & (ensemble_df["time"].dt.date <= end)]
-                for date in sorted(future_df["time"].dt.date.unique()):
-                    day_df = future_df[future_df["time"].dt.date == date]
-                    dow = WEEKDAYS[date.weekday()]
-                    render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w1_{date}")
-                    st.divider()
-            else:
-                # 8〜14日先
-                WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
-                start = today + timedelta(days=8)
-                future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
-                if future_df.empty:
-                    st.info("8日以降のデータがまだ取得できていません。")
-                else:
-                    for date in sorted(future_df["time"].dt.date.unique()):
-                        day_df = future_df[future_df["time"].dt.date == date]
-                        dow = WEEKDAYS[date.weekday()]
-                        render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w2_{date}")
-                        st.divider()
+    WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
+
+    for i in range(3):
+        with tabs[i]:
+            target_date = today + timedelta(days=i)
+            day_df = ensemble_df[ensemble_df["time"].dt.date == target_date]
+            label = ["今日", "明日", "明後日"][i]
+            dow = WEEKDAYS[target_date.weekday()]
+            render_day_detail(day_df, f"{label} ({target_date.strftime('%m/%d')}・{dow})")
+
+    with tabs[3]:
+        # 3〜7日先
+        start = today + timedelta(days=3)
+        end = today + timedelta(days=7)
+        future_df = ensemble_df[(ensemble_df["time"].dt.date >= start) & (ensemble_df["time"].dt.date <= end)]
+        for date in sorted(future_df["time"].dt.date.unique()):
+            day_df = future_df[future_df["time"].dt.date == date]
+            dow = WEEKDAYS[date.weekday()]
+            render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w1_{date}")
+            st.divider()
+
+    with tabs[4]:
+        # 8〜14日先
+        start = today + timedelta(days=8)
+        future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
+        if future_df.empty:
+            st.info("8日以降のデータがまだ取得できていません。")
+        else:
+            for date in sorted(future_df["time"].dt.date.unique()):
+                day_df = future_df[future_df["time"].dt.date == date]
+                dow = WEEKDAYS[date.weekday()]
+                render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w2_{date}")
+                st.divider()
 
     # --- 全期間グラフ ---
     with tabs[5]:
