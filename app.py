@@ -605,7 +605,7 @@ if forecast_btn and lat:
 
     tabs = st.tabs(["📅 今日", "📅 明日", "📅 明後日", "📆 3〜7日先", "📆 8〜14日先", "📊 全期間グラフ"])
 
-    def render_day_detail(df_day, title):
+    def render_day_detail(df_day, title, key_suffix=""):
         if df_day.empty:
             st.info("データなし")
             return
@@ -728,7 +728,7 @@ if forecast_btn and lat:
         )
         gfig.update_xaxes(gridcolor="#333")
         gfig.update_yaxes(gridcolor="#333")
-        st.plotly_chart(gfig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
+        st.plotly_chart(gfig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False}, key=f"gfig_{title}{key_suffix}")
         st.caption("🟢 80点以上: 最高　🟡 60〜79点: 良好　🟠 40〜59点: 注意　🔴 39点以下: 困難")
 
     today = ensemble_df["time"].dt.date.min()
@@ -751,7 +751,7 @@ if forecast_btn and lat:
                 for date in sorted(future_df["time"].dt.date.unique()):
                     day_df = future_df[future_df["time"].dt.date == date]
                     dow = WEEKDAYS[date.weekday()]
-                    render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）")
+                    render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w1_{date}")
                     st.divider()
             else:
                 # 8〜14日先
@@ -764,7 +764,7 @@ if forecast_btn and lat:
                     for date in sorted(future_df["time"].dt.date.unique()):
                         day_df = future_df[future_df["time"].dt.date == date]
                         dow = WEEKDAYS[date.weekday()]
-                        render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）")
+                        render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w2_{date}")
                         st.divider()
 
     # --- 全期間グラフ ---
