@@ -666,7 +666,7 @@ if forecast_btn and lat:
         header_html = "".join(header_cells)
 
         st.markdown(f"""
-<div style="overflow-x:auto;overflow-y:auto;max-height:600px">
+<div style="overflow-x:auto">
 <table style="width:100%;border-collapse:collapse;font-size:13px;color:inherit">
 <thead><tr>{header_html}</tr></thead>
 <tbody>{rows_html}</tbody>
