@@ -377,8 +377,10 @@ def generate_hourly_comment(row) -> str:
         parts.append(f"風速{wind:.1f}m/sのやや強い風。アゲインスト・フォローを意識して")
     elif wind >= 5:
         parts.append(f"風速{wind:.1f}m/sの風あり。ショートゲームへの影響を考慮")
+    elif wind >= 4:
+        parts.append(f"風速{wind:.1f}m/sの風を感じる。ロングショットで1番手分の影響あり")
     elif wind >= 3:
-        parts.append(f"微風({wind:.1f}m/s)でプレーしやすい")
+        parts.append(f"微風({wind:.1f}m/s)。ほぼ影響なし")
     else:
         parts.append("ほぼ無風で狙いどおりのショットが期待できる")
 
