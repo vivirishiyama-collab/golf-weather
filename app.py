@@ -46,11 +46,6 @@ body { font-family: 'Hiragino Sans', sans-serif; }
 /* テーブルの横スクロールをスマホで有効に */
 [data-testid="stDataFrame"] { overflow-x: auto !important; }
 
-/* スマホではstickyを無効化（iOSのガクガクバグ対策） */
-@media (max-width: 768px) {
-    .golf-table th { position: static !important; }
-    .golf-table-wrap { overflow-y: visible !important; max-height: none !important; }
-}
 
 /* サイドバー非表示時の余白調整 */
 @media (max-width: 768px) {
@@ -672,11 +667,13 @@ if forecast_btn and lat:
         header_html = "".join(header_cells)
 
         st.markdown(f"""
-<div class="golf-table-wrap" style="overflow-x:auto;overflow-y:auto;max-height:90vh">
+<div style="overflow-y:auto;max-height:90vh;-webkit-overflow-scrolling:touch">
+<div style="overflow-x:auto">
 <table class="golf-table" style="width:100%;border-collapse:collapse;font-size:13px;color:inherit">
 <thead><tr>{header_html}</tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
+</div>
 </div>
 """, unsafe_allow_html=True)
 
