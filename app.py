@@ -640,12 +640,11 @@ if forecast_btn and lat:
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
         display_df["天気"] = display_df["weathercode"].fillna(0).apply(get_weather_code_label)
         display_df["気温(°C)"] = display_df["temperature_2m"].round(1)
-        display_df["降水確率(%)"] = to_int_safe(display_df["precipitation_probability"])
-        display_df["降水量(mm)"] = display_df["precipitation"].fillna(0).round(1)
-        display_df["風速(m/s)"] = display_df["windspeed_10m"].round(1)
+        display_df["降水量"] = display_df["precipitation"].fillna(0).round(1).apply(lambda v: f"{v}mm")
+        display_df["風速"] = display_df["windspeed_10m"].round(1).apply(lambda v: f"{v}m/s")
         display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
 
-        cols_show = ["時刻", "天気", "気温(°C)", "降水確率(%)", "降水量(mm)", "風速(m/s)", "コメント"]
+        cols_show = ["時刻", "天気", "気温(°C)", "降水量", "風速", "コメント"]
         rows_html = ""
         for _, r in display_df[cols_show].iterrows():
             cells = []
@@ -681,9 +680,9 @@ if forecast_btn and lat:
 
         def calc_score(row):
             s = 100
-            pp = row.get("降水確率(%)", 0) or 0
-            pr = row.get("降水量(mm)", 0) or 0
-            ws = row.get("風速(m/s)", 0) or 0
+            pp = row.get("precipitation_probability", 0) or 0
+            pr = row.get("precipitation", 0) or 0
+            ws = row.get("windspeed_10m", 0) or 0
             t  = row.get("気温(°C)", 20) or 20
             if pp >= 80:    s -= 60
             elif pp >= 60:  s -= 40
