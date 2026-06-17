@@ -639,12 +639,12 @@ if forecast_btn and lat:
 
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
         display_df["天気"] = display_df["weathercode"].fillna(0).apply(get_weather_code_label)
-        display_df["気温(°C)"] = display_df["temperature_2m"].round(1)
+        display_df["気温"] = display_df["temperature_2m"].round(1).apply(lambda v: f"{v}℃")
         display_df["降水量"] = display_df["precipitation"].fillna(0).round(1).apply(lambda v: f"{v}mm")
         display_df["風速"] = display_df["windspeed_10m"].round(1).apply(lambda v: f"{v}m/s")
         display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
 
-        cols_show = ["時刻", "天気", "気温(°C)", "降水量", "風速", "コメント"]
+        cols_show = ["時刻", "天気", "気温", "降水量", "風速", "コメント"]
         rows_html = ""
         for _, r in display_df[cols_show].iterrows():
             cells = []
@@ -683,7 +683,7 @@ if forecast_btn and lat:
             pp = row.get("precipitation_probability", 0) or 0
             pr = row.get("precipitation", 0) or 0
             ws = row.get("windspeed_10m", 0) or 0
-            t  = row.get("気温(°C)", 20) or 20
+            t  = row.get("temperature_2m", 20) or 20
             if pp >= 80:    s -= 60
             elif pp >= 60:  s -= 40
             elif pp >= 40:  s -= 20
