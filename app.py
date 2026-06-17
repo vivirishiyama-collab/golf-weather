@@ -660,20 +660,18 @@ if forecast_btn and lat:
 
         header_cells = []
         for i, c in enumerate(cols_show):
-            if i == 0:  # 時刻ヘッダー：左固定＋上固定
-                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;left:0;top:0;z-index:4;border-right:2px solid #4a7a5f">{c}</th>')
-            else:  # 他のヘッダー：上固定のみ
-                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;top:0;z-index:2">{c}</th>')
+            if i == 0:
+                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap;position:sticky;left:0;z-index:2;border-right:2px solid #4a7a5f">{c}</th>')
+            else:
+                header_cells.append(f'<th style="padding:6px 10px;background:#1e3a2f;color:#ffffff;text-align:left;white-space:nowrap">{c}</th>')
         header_html = "".join(header_cells)
 
         st.markdown(f"""
-<div style="overflow-y:auto;max-height:90vh;-webkit-overflow-scrolling:touch">
 <div style="overflow-x:auto">
 <table class="golf-table" style="width:100%;border-collapse:collapse;font-size:13px;color:inherit">
-<thead><tr>{header_html}</tr></thead>
+<thead style="position:sticky;top:0;z-index:10"><tr>{header_html}</tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
-</div>
 </div>
 """, unsafe_allow_html=True)
 
