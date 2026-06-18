@@ -82,26 +82,22 @@ def get_weather_code_label(code):
 # ---- 場所名・住所・ゴルフ場名をNominatimで検索 ----
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def search_places(keyword: str) -> list:
-    """Nominatimでキーワードを検索し、候補リストを返す（1〜2秒で完了）。
-    ゴルフ場名・住所・市区町村名・何でも対応。"""
-    try:
-        r = requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": keyword,
-                "format": "jsonv2",
-                "limit": 10,
-                "addressdetails": 1,
-                "countrycodes": "jp",
-            },
-            headers={"User-Agent": "golf-weather-app/1.0 (r.ishiyama73@gmail.com)"},
-            timeout=8,
-        )
-        r.raise_for_status()
-        items = r.json()
-    except Exception:
-        return []
+def _search_places_cached(keyword: str) -> list:
+    """キャッシュ層：失敗時は例外を投げてキャッシュさせない"""
+    r = requests.get(
+        "https://nominatim.openstreetmap.org/search",
+        params={
+            "q": keyword,
+            "format": "jsonv2",
+            "limit": 10,
+            "addressdetails": 1,
+            "countrycodes": "jp",
+        },
+        headers={"User-Agent": "golf-weather-app/1.0 (r.ishiyama73@gmail.com)"},
+        timeout=10,
+    )
+    r.raise_for_status()
+    items = r.json()
 
     results = []
     seen_coords = set()
@@ -127,6 +123,12 @@ def search_places(keyword: str) -> list:
             "address": addr or item.get("display_name", "")[:40],
         })
     return results
+
+def search_places(keyword: str) -> list:
+    try:
+        return _search_places_cached(keyword)
+    except Exception:
+        return []
 
 # ---- 単一モデルの天気データ取得 ----
 @st.cache_data(ttl=1800)
