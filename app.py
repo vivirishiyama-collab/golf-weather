@@ -83,44 +83,39 @@ def get_weather_code_label(code):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _search_places_cached(keyword: str) -> list:
-    """キャッシュ層：失敗時は例外を投げてキャッシュさせない"""
     r = requests.get(
-        "https://nominatim.openstreetmap.org/search",
+        "https://geocoding-api.open-meteo.com/v1/search",
         params={
-            "q": keyword,
-            "format": "jsonv2",
-            "limit": 10,
-            "addressdetails": 1,
-            "countrycodes": "jp",
+            "name": keyword,
+            "count": 10,
+            "language": "ja",
+            "format": "json",
         },
-        headers={"User-Agent": "golf-weather-app/1.0 (r.ishiyama73@gmail.com)"},
         timeout=10,
     )
     r.raise_for_status()
-    items = r.json()
+    items = r.json().get("results") or []
 
     results = []
     seen_coords = set()
     for item in items:
-        lat_r = round(float(item["lat"]), 3)
-        lon_r = round(float(item["lon"]), 3)
+        lat_r = round(float(item["latitude"]), 3)
+        lon_r = round(float(item["longitude"]), 3)
         if (lat_r, lon_r) in seen_coords:
             continue
         seen_coords.add((lat_r, lon_r))
 
-        addr_obj = item.get("address", {})
         addr_parts = [
-            addr_obj.get("state", "") or addr_obj.get("province", ""),
-            addr_obj.get("city", "") or addr_obj.get("county", "") or addr_obj.get("town", "") or addr_obj.get("village", ""),
+            item.get("admin1", ""),
+            item.get("admin2", "") or item.get("admin3", ""),
         ]
         addr = " ".join(p for p in addr_parts if p)
 
-        name = item.get("name") or item.get("display_name", "").split(",")[0]
         results.append({
-            "name": name,
-            "lat": float(item["lat"]),
-            "lon": float(item["lon"]),
-            "address": addr or item.get("display_name", "")[:40],
+            "name": item.get("name", keyword),
+            "lat": float(item["latitude"]),
+            "lon": float(item["longitude"]),
+            "address": addr or item.get("country", ""),
         })
     return results
 
