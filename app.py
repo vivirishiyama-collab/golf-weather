@@ -631,7 +631,7 @@ if forecast_btn and lat:
 
         cols_needed = ["time", "temperature_2m", "apparent_temperature",
                        "precipitation_probability", "precipitation",
-                       "windspeed_10m", "cloudcover", "weathercode"]
+                       "windspeed_10m", "cloudcover", "weathercode", "relativehumidity_2m"]
         display_df = df_day[[c for c in cols_needed if c in df_day.columns]].copy()
         for c in cols_needed:
             if c not in display_df.columns:
