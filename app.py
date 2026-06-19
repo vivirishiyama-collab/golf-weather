@@ -685,14 +685,14 @@ if forecast_btn and lat:
             pr = row.get("precipitation", 0) or 0
             ws = row.get("windspeed_10m", 0) or 0
             t  = row.get("temperature_2m", 20) or 20
-            if pp >= 80:    s -= 60
-            elif pp >= 60:  s -= 40
-            elif pp >= 40:  s -= 20
-            elif pp >= 20:  s -= 10
-            if pr >= 5:     s -= 30   # 強雨
-            elif pr >= 2:   s -= 20   # 雨
-            elif pr >= 1:   s -= 8    # 小雨
-            elif pr >= 0.3: s -= 3    # 霧雨程度・ほぼ問題なし
+            if pp >= 80:    s -= 75
+            elif pp >= 60:  s -= 55
+            elif pp >= 40:  s -= 30
+            elif pp >= 20:  s -= 15
+            if pr >= 5:     s -= 45   # 強雨
+            elif pr >= 2:   s -= 30   # 雨
+            elif pr >= 1:   s -= 15   # 小雨
+            elif pr >= 0.3: s -= 5    # 霧雨
             if ws >= 12:    s -= 45
             elif ws >= 8:   s -= 30
             elif ws >= 6:   s -= 15
