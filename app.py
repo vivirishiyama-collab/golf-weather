@@ -693,9 +693,9 @@ if forecast_btn and lat:
             if ws >= 8:     s -= 100
             elif ws >= 6:   s -= 50
             elif ws >= 4:   s -= 30
-            if 16 <= t <= 26:      s += 5
+            if 15 <= t <= 25:      s += 5
             elif t < 5 or t > 35:  s -= 25
-            elif t < 10 or t > 32: s -= 12
+            elif t < 10 or t > 30: s -= 12
             return max(0, min(100, s))
 
         score_df["スコア"] = score_df.apply(calc_score, axis=1).astype(int)
