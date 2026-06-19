@@ -675,8 +675,8 @@ if forecast_btn and lat:
 </div>
 """, unsafe_allow_html=True)
 
-        # ゴルフ適性スコア（天気スコアのみ）
-        st.markdown("#### 🏌️ ゴルフ適性スコア")
+        # プレー快適スコア（天気スコアのみ）
+        st.markdown("#### 🏌️ プレー快適スコア")
         score_df = display_df.copy()
 
         def calc_score(row):
