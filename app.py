@@ -640,7 +640,7 @@ if forecast_btn and lat:
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
         display_df["天気"] = display_df["weathercode"].fillna(0).apply(get_weather_code_label)
         display_df["気温"] = display_df["temperature_2m"].round(1).apply(lambda v: f"{v}℃")
-        display_df["湿度"] = to_int_safe(display_df["relativehumidity_2m"]).apply(lambda v: f"{v}%")
+        display_df["湿度"] = to_int_safe(display_df.get("relativehumidity_2m", pd.Series([0]*len(display_df)))).apply(lambda v: f"{v}%")
         display_df["降水量"] = display_df["precipitation"].fillna(0).round(1).apply(lambda v: f"{v}mm")
         display_df["風速"] = display_df["windspeed_10m"].round(1).apply(lambda v: f"{v}m/s")
         display_df["コメント"] = display_df.apply(generate_hourly_comment, axis=1)
