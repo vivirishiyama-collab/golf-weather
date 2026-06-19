@@ -120,10 +120,22 @@ def _search_places_cached(keyword: str) -> list:
     return results
 
 def search_places(keyword: str) -> list:
+    import re
+    results = []
     try:
-        return _search_places_cached(keyword)
+        results = _search_places_cached(keyword)
     except Exception:
-        return []
+        pass
+
+    # 都道府県プレフィックスを除いたキーワードでも検索（例：「東京都江戸川区」→「江戸川区」）
+    stripped = re.sub(r'^.+?[都道府県]', '', keyword).strip()
+    if stripped and stripped != keyword and not results:
+        try:
+            results = _search_places_cached(stripped)
+        except Exception:
+            pass
+
+    return results
 
 # ---- 単一モデルの天気データ取得 ----
 @st.cache_data(ttl=1800)
