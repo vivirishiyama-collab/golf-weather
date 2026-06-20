@@ -121,19 +121,29 @@ def _search_places_cached(keyword: str) -> list:
 
 def search_places(keyword: str) -> list:
     import re
-    results = []
-    try:
-        results = _search_places_cached(keyword)
-    except Exception:
-        pass
 
-    # 都道府県プレフィックスを除いたキーワードでも検索（例：「東京都江戸川区」→「江戸川区」）
-    stripped = re.sub(r'^.+?[都道府県]', '', keyword).strip()
-    if stripped and stripped != keyword and not results:
+    def _try(kw):
         try:
-            results = _search_places_cached(stripped)
+            return _search_places_cached(kw)
         except Exception:
-            pass
+            return []
+
+    # 1. そのまま検索
+    results = _try(keyword)
+    if results:
+        return results
+
+    # 2. 都道府県プレフィックスを除去（例：「東京都新宿区」→「新宿区」）
+    stripped = re.sub(r'^.+?[都道府県]', '', keyword).strip()
+    if stripped and stripped != keyword:
+        results = _try(stripped)
+        if results:
+            return results
+
+    # 3. 末尾の区・市・町・村・郡を除去（例：「新宿区」→「新宿」）
+    trimmed = re.sub(r'[区市町村郡]$', '', stripped or keyword).strip()
+    if trimmed and trimmed != (stripped or keyword):
+        results = _try(trimmed)
 
     return results
 
