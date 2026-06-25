@@ -703,10 +703,10 @@ if forecast_btn and lat:
 
         def calc_score(row):
             s = 100
-            pp = row.get("precipitation_probability", 0) or 0
             pr = row.get("precipitation", 0) or 0
             ws = row.get("windspeed_10m", 0) or 0
             t  = row.get("temperature_2m", 20) or 20
+            rh = row.get("relativehumidity_2m", 50) or 50
             if pr >= 4:     s -= 80   # 強雨
             elif pr >= 2:   s -= 60   # 雨
             elif pr >= 1:   s -= 40   # 小雨
@@ -718,6 +718,9 @@ if forecast_btn and lat:
             if 15 <= t <= 25:      s += 5
             elif t < 5 or t > 35:  s -= 25
             elif t < 10 or t > 30: s -= 12
+            if t >= 25:
+                if rh >= 85:   s -= 20
+                elif rh >= 75: s -= 10
             return max(0, min(100, s))
 
         score_df["スコア"] = score_df.apply(calc_score, axis=1).astype(int)
