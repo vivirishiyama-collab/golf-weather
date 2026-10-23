@@ -110,37 +110,56 @@ def _search_places_cached(keyword: str) -> list:
         })
     return results
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _gsi_search_cached(keyword: str) -> list:
+    return core.gsi_search(keyword)
+
 def search_places(keyword: str) -> list:
     import re
 
-    # 0. 緯度経度・GoogleマップのURLならそのまま使う（ゴルフ場の正確な位置で予報できる）
+    keyword = keyword.strip()
+    # 0. 短縮URL（maps.app.goo.gl）は展開してから読む
+    keyword = core.expand_short_url(keyword)
+
+    # 1. 緯度経度・座標入りのGoogleマップURLならそのまま使う（ゴルフ場の正確な位置で予報できる）
     coords = core.parse_coords(keyword)
     if coords:
-        return [{"name": "指定した地点", "lat": coords[0], "lon": coords[1],
+        name = core.place_name_from_maps_url(keyword) or "指定した地点"
+        return [{"name": name, "lat": coords[0], "lon": coords[1],
                  "address": f"緯度 {coords[0]:.4f} / 経度 {coords[1]:.4f}"}]
 
-    def _try(kw):
+    # 2. 座標のないGoogleマップURLは、URLの中の場所名で検索する
+    if "google" in keyword or "http" in keyword:
+        name = core.place_name_from_maps_url(keyword)
+        if not name:
+            return []
+        keyword = name
+
+    def _try(fn, kw):
         try:
-            return _search_places_cached(kw)
+            return fn(kw)
         except Exception:
             return []
 
-    # 1. そのまま検索
-    results = _try(keyword)
+    # 3. 国土地理院（ゴルフ場名・住所に強い）→ Open-Meteo（海外・都市名）の順に探す
+    results = _try(_gsi_search_cached, keyword)
+    if results:
+        return results
+    results = _try(_search_places_cached, keyword)
     if results:
         return results
 
-    # 2. 都道府県プレフィックスを除去（例：「東京都新宿区」→「新宿区」）
+    # 4. 都道府県プレフィックスを除去（例：「東京都新宿区」→「新宿区」）
     stripped = re.sub(r'^.+?[都道府県]', '', keyword).strip()
     if stripped and stripped != keyword:
-        results = _try(stripped)
+        results = _try(_search_places_cached, stripped)
         if results:
             return results
 
-    # 3. 末尾の区・市・町・村・郡を除去（例：「新宿区」→「新宿」）
+    # 5. 末尾の区・市・町・村・郡を除去（例：「新宿区」→「新宿」）
     trimmed = re.sub(r'[区市町村郡]$', '', stripped or keyword).strip()
     if trimmed and trimmed != (stripped or keyword):
-        results = _try(trimmed)
+        results = _try(_search_places_cached, trimmed)
 
     return results
 
@@ -301,14 +320,14 @@ def _do_search():
 with col1:
     keyword = st.text_input(
         "ゴルフ場名・住所・市区町村名を入力",
-        placeholder="例: 成田市、千葉県富里市、35.77, 140.32、GoogleマップのURL",
+        placeholder="例: オーク・ヒルズCC、マリアゴルフ、成田市、GoogleマップのURL、35.77, 140.32",
         label_visibility="collapsed",
         key="keyword_input",
         on_change=_do_search,
     )
 with col2:
     search_btn = st.button("🔍 候補を検索", type="secondary", width="stretch")
-st.caption("💡 ゴルフ場の正確な位置で予報したいときは、Googleマップでゴルフ場を開いてURLを貼るか、緯度経度を入力してください（山あいのコースは市役所の位置と天気が違うことがあります）")
+st.caption("💡 ゴルフ場名で見つからないときは、Googleマップでゴルフ場を開いて共有URLを貼るか、緯度経度を入力してください")
 
 # ボタン押下でも検索
 if search_btn and keyword and len(keyword) >= 2:
@@ -643,7 +662,7 @@ else:
     st.markdown(f"""
     ---
     ### 使い方
-    1. 上の検索欄に **住所・市区町村名**、または **緯度経度 / GoogleマップのURL** を入力する（例: **成田市**、**千葉県富里市**、**35.77, 140.32**）
+    1. 上の検索欄に **ゴルフ場名・住所・市区町村名**、または **GoogleマップのURL / 緯度経度** を入力する（例: **オーク・ヒルズCC**、**成田市**、**35.77, 140.32**）
     2. 「候補を検索」ボタンを押すと候補がプルダウンで表示される
     3. リストから行きたい場所を選んで「この場所の予報を取得」をクリック
 

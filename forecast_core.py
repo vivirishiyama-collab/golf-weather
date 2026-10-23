@@ -587,15 +587,90 @@ def wind_dir_label(deg):
 
 
 def parse_coords(text):
-    """「35.77, 140.32」や Google マップのURL（@35.77,140.32）から緯度経度を取り出す"""
-    m = re.search(r"@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)", text) or \
-        re.search(r"(-?\d{1,2}\.\d{2,})\s*[,、 ]\s*(-?\d{1,3}\.\d{2,})", text)
+    """「35.77, 140.32」や Google マップのURL（@35.77,140.32 / !3d35.77!4d140.32）から緯度経度を取り出す"""
+    m = (re.search(r"!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)", text)
+         or re.search(r"@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)", text)
+         or re.search(r"[?&](?:q|query|ll)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)", text))
+    if not m and "http" not in text and "google" not in text:
+        m = re.search(r"(-?\d{1,2}\.\d{2,})\s*[,、 ]\s*(-?\d{1,3}\.\d{2,})", text)
     if not m:
         return None
     lat, lon = float(m.group(1)), float(m.group(2))
     if -90 <= lat <= 90 and -180 <= lon <= 180:
         return lat, lon
     return None
+
+
+def expand_short_url(text):
+    """maps.app.goo.gl / goo.gl の短縮URLを展開する（失敗したらそのまま返す）"""
+    m = re.search(r"https?://(?:maps\.app\.goo\.gl|goo\.gl)/\S+", text)
+    if not m:
+        return text
+    try:
+        r = requests.get(m.group(0), allow_redirects=True, timeout=10,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        return r.url
+    except Exception:
+        return text
+
+
+def place_name_from_maps_url(text):
+    """GoogleマップのURL（/maps/place/マリアゴルフ/data=...）から場所の名前を取り出す"""
+    from urllib.parse import unquote_plus
+    m = re.search(r"/maps/place/([^/?@]+)", text)
+    if m:
+        return unquote_plus(m.group(1)).strip()
+    m = re.search(r"[?&]q=([^&]+)", text)
+    if m and "google" in text:
+        return unquote_plus(m.group(1)).strip()
+    return None
+
+
+_MUNI = None
+
+
+def _muni_table():
+    """国土地理院の市区町村コード表（12206 → 千葉県 木更津市）"""
+    global _MUNI
+    if _MUNI is None:
+        _MUNI = {}
+        try:
+            r = _get("https://maps.gsi.go.jp/js/muni.js", timeout=15)
+            r.encoding = "utf-8"
+            for code, val in re.findall(r"MUNI_ARRAY\[\"(\d+)\"\]\s*=\s*'([^']+)'", r.text):
+                parts = val.split(",")
+                if len(parts) >= 4:
+                    _MUNI[code.lstrip("0")] = f"{parts[1]} {parts[3]}"
+        except Exception:
+            pass
+    return _MUNI
+
+
+def gsi_search(keyword, limit=10):
+    """国土地理院の地名検索（住所に加え、ゴルフ場などの施設名も引ける）"""
+    r = _get("https://msearch.gsi.go.jp/address-search/AddressSearch", params={"q": keyword}, timeout=10)
+    items = r.json() or []
+    muni = _muni_table()
+    kw = keyword.replace(" ", "").replace("　", "")
+    out, seen = [], set()
+    for it in items:
+        lon, lat = it["geometry"]["coordinates"][:2]
+        title = it["properties"].get("title", "").strip()
+        key = (round(lat, 3), round(lon, 3))
+        if key in seen or not title:
+            continue
+        seen.add(key)
+        code = (it["properties"].get("addressCode") or "").lstrip("0")
+        out.append({
+            "name": title, "lat": float(lat), "lon": float(lon),
+            "address": muni.get(code, "") or "国土地理院",
+            "_exact": kw in title.replace(" ", ""),
+        })
+    # 入力した名前をそのまま含むもの（施設名の一致）を先に
+    out.sort(key=lambda x: not x["_exact"])
+    for x in out:
+        x.pop("_exact")
+    return out[:limit]
 
 
 def now_local(utc_offset_seconds):
