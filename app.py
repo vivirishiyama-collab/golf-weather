@@ -456,17 +456,20 @@ if st.session_state.get("loc"):
 
         # サマリー指標
         st.markdown(f"### {title}")
-        play = df_day[(df_day["time"].dt.hour >= 6) & (df_day["time"].dt.hour <= 17)]
+        play = core.play_hours(df_day)
         play = play if not play.empty else df_day
+        rain = core.play_rain_hours(df_day)
+        rain = rain if not rain.empty else df_day
         gust_max = play["windgusts_10m"].max()
         cards_html = "".join([
             f'<div class="summary-card"><div class="val">{v}</div><div class="lbl">{l}</div></div>'
             for l, v in [
                 ("最高気温", f"{df_day['temperature_2m'].max():.1f}°C"),
                 ("最低気温", f"{df_day['temperature_2m'].min():.1f}°C"),
-                ("雨の可能性(6-18時最大)", f"{play['precipitation_probability'].max():.0f}%"),
-                ("最大風速(6-18時)", f"{play['windspeed_10m'].max():.1f} m/s"),
-                ("最大瞬間風速(6-18時)", f"{gust_max:.0f} m/s" if not np.isnan(gust_max) else "-"),
+                ("雨の可能性(7-15時最大)", f"{rain['precipitation_probability'].max():.0f}%"),
+                ("ラウンド中の雨量", f"{rain['precipitation'].sum():.1f} mm"),
+                ("最大風速(7-15時)", f"{play['windspeed_10m'].max():.1f} m/s"),
+                ("最大瞬間風速(7-15時)", f"{gust_max:.0f} m/s" if not np.isnan(gust_max) else "-"),
                 ("予想雨量(1日)", f"{df_day['precipitation'].sum():.1f} mm"),
             ]
         ])
@@ -498,7 +501,9 @@ if st.session_state.get("loc"):
 
         cols_show = ["時刻", "天気", "気温", "湿度", "雨の可能性", "降れば", "風速", "瞬間", "風向", "コメント"]
         rows_html = ""
-        for _, r in display_df[cols_show].iterrows():
+        for idx, r in display_df[cols_show].iterrows():
+            hr = display_df.at[idx, "time"].hour
+            in_play = core.PLAY_START <= hr <= core.PLAY_END
             cells = []
             for i, (c, v) in enumerate(r.items()):
                 if i == 0:  # 時刻列を横スクロール時に固定
@@ -507,7 +512,7 @@ if st.session_state.get("loc"):
                     cells.append(f'<td style="white-space:nowrap;padding:6px 10px;border-bottom:1px solid #ddd">{v}</td>')
                 else:
                     cells.append(f'<td style="padding:6px 10px;border-bottom:1px solid #ddd;min-width:200px">{v}</td>')
-            rows_html += "<tr>" + "".join(cells) + "</tr>"
+            rows_html += ('<tr style="background:rgba(45,198,83,0.10)">' if in_play else '<tr style="opacity:0.6">') + "".join(cells) + "</tr>"
 
         header_cells = []
         for i, c in enumerate(cols_show):
@@ -525,7 +530,7 @@ if st.session_state.get("loc"):
 </table>
 </div>
 """, unsafe_allow_html=True)
-        st.caption("雨の可能性＝その1時間に0.2mm以上降る確率。降れば＝降った場合の1時間雨量の目安。")
+        st.caption("緑の行＝ラウンド時間帯（7〜15時）。雨の可能性＝その時刻までの1時間に0.2mm以上降る確率。降れば＝降った場合の1時間雨量の目安。")
 
         # プレー快適スコア（天気スコアのみ）
         st.markdown("#### 🏌️ プレー快適スコア")
@@ -564,7 +569,7 @@ if st.session_state.get("loc"):
 
     WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 
-    # --- 14日間の一覧（1日1行・プレー時間帯 6〜17時で評価） ---
+    # --- 14日間の一覧（1日1行・プレー時間帯 7〜15時で評価） ---
     def day_label(d):
         return f"{d.month}/{d.day}({WEEKDAYS[d.weekday()]})"
 
@@ -574,13 +579,13 @@ if st.session_state.get("loc"):
     scored = ensemble_df
     days = []
     for d, g in scored.groupby(scored["time"].dt.date):
-        play = g[(g["time"].dt.hour >= 6) & (g["time"].dt.hour <= 17)]
-        if play.empty:
+        play, rain = core.play_hours(g), core.play_rain_hours(g)
+        if play.empty or rain.empty:
             continue
         lead = (d - today).days
-        score = core.day_score(play)
+        score = core.day_score(g)
         # 天気: 雨が濃い時間があればその時間、なければ日中に多い天気
-        wet = play[play["rain_prob"] >= 0.5]
+        wet = rain[rain["rain_prob"] >= 0.5]
         code = wet.loc[wet["rain_prob"].idxmax(), "weathercode"] if not wet.empty else play["weathercode"].mode().iloc[0]
         gust = play["windgusts_10m"].max()
         days.append({
@@ -588,13 +593,13 @@ if st.session_state.get("loc"):
             "日付": ("今日 " if lead == 0 else "明日 " if lead == 1 else "") + day_label(d),
             "天気": get_weather_code_label(float(code)),
             "スコア": f"{score_mark(score)} {score}" if lead < 7 else f"{score_mark(score)} ({score})",
-            "雨の可能性": f"{play['precipitation_probability'].max():.0f}%",
+            "雨の可能性": f"{rain['precipitation_probability'].max():.0f}%",
             "最大風速": f"{play['windspeed_10m'].max():.0f}m/s" + (f"（瞬間{gust:.0f}）" if not np.isnan(gust) else ""),
             "気温": f"{play['temperature_2m'].min():.0f}〜{play['temperature_2m'].max():.0f}℃",
         })
     overview = pd.DataFrame(days)
 
-    st.markdown("### 📅 14日間の予報（プレー時間帯 6〜17時）")
+    st.markdown("### 📅 14日間の予報（プレー時間帯 7〜15時）")
     st.caption("行を選ぶと、その日の1時間ごとの予報が下に出ます。スコアは風・気温から、雨に当たりそうな時間の分を差し引いた点。7日以上先は（）付き＝当たりにくいので目安です。")
     sel = st.dataframe(
         overview.drop(columns=["date"]),

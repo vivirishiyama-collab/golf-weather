@@ -576,17 +576,34 @@ def play_score(row, include_rain=True):
     return int(round(max(0, min(100, s))))
 
 
-def day_score(play):
-    """1日（プレー時間帯）の点数。
+# ゴルフのメイン時間帯（スタート〜上がり）
+PLAY_START, PLAY_END = 7, 15
+
+
+def play_hours(df):
+    """気温・風など、その時刻の値: 7:00〜15:00"""
+    h = df["time"].dt.hour
+    return df[(h >= PLAY_START) & (h <= PLAY_END)]
+
+
+def play_rain_hours(df):
+    """雨量は「その時刻までの1時間」の量なので、8:00〜15:00の値＝7〜15時に降る雨"""
+    h = df["time"].dt.hour
+    return df[(h > PLAY_START) & (h <= PLAY_END)]
+
+
+def day_score(day):
+    """1日（プレー時間帯 7〜15時）の点数。
     1時間ごとの点数を平均すると、数時間の雨が薄まって雨の日でも高得点になるので、
     雨以外（風・気温・湿度）の平均から「雨に当たりそうな時間」に応じて差し引く。
-    例: 1mm/h級の雨が確実に1時間 → -10点、ほぼ1日中雨 → -80点（上限）"""
+    例: 1mm/h級の雨が確実に1時間 → -10点、ほぼラウンド中ずっと雨 → -80点（上限）"""
+    play, rain = play_hours(day), play_rain_hours(day)
     if play.empty:
         return 0
     base = play.apply(lambda r: play_score(r, include_rain=False), axis=1).mean()
     wet_hours = sum(
         p * rain_penalty(a) / 40
-        for p, a in zip(play["rain_prob"].fillna(0), play["rain_amount"].fillna(0))
+        for p, a in zip(rain["rain_prob"].fillna(0), rain["rain_amount"].fillna(0))
     )
     return int(round(max(0, min(100, base - min(80, 10 * wet_hours)))))
 
