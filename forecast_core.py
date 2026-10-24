@@ -539,10 +539,10 @@ def rain_penalty(amount):
     return 0
 
 
-def play_score(row):
+def play_score(row, include_rain=True):
     """プレー快適スコア。雨は「確率 × 降った場合の減点」で期待値にする"""
     s = 100
-    prob = row.get("rain_prob", 0) or 0
+    prob = (row.get("rain_prob", 0) or 0) if include_rain else 0
     amt = row.get("rain_amount", 0) or 0
     ws = row.get("windspeed_10m", 0) or 0
     gust = row.get("windgusts_10m", np.nan)
@@ -574,6 +574,21 @@ def play_score(row):
         elif rh >= 75:
             s -= 10
     return int(round(max(0, min(100, s))))
+
+
+def day_score(play):
+    """1日（プレー時間帯）の点数。
+    1時間ごとの点数を平均すると、数時間の雨が薄まって雨の日でも高得点になるので、
+    雨以外（風・気温・湿度）の平均から「雨に当たりそうな時間」に応じて差し引く。
+    例: 1mm/h級の雨が確実に1時間 → -10点、ほぼ1日中雨 → -80点（上限）"""
+    if play.empty:
+        return 0
+    base = play.apply(lambda r: play_score(r, include_rain=False), axis=1).mean()
+    wet_hours = sum(
+        p * rain_penalty(a) / 40
+        for p, a in zip(play["rain_prob"].fillna(0), play["rain_amount"].fillna(0))
+    )
+    return int(round(max(0, min(100, base - min(80, 10 * wet_hours)))))
 
 
 WIND_DIRS = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東",

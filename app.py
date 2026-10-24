@@ -204,17 +204,21 @@ def cached_verification(lat, lon, model_ids: tuple):
         return station, {}
 
 def load_forecast(lat, lon, model_ids):
-    jp = core.is_japan(lat, lon)
     with st.spinner("気象モデル・アンサンブル・アメダス実測を並列取得中..."):
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            f_fc = ex.submit(cached_forecasts, lat, lon, model_ids)
-            f_ens = ex.submit(cached_ensemble, lat, lon)
-            f_pop = ex.submit(cached_jma_pop, lat, lon) if jp else None
-            f_ver = ex.submit(cached_verification, lat, lon, model_ids) if jp else None
-            fc, utc_off, elevation = f_fc.result()
-            ens, ens_groups = f_ens.result()
-            jma_pop, jma_area = f_pop.result() if f_pop else ([], None)
-            station, verif = f_ver.result() if f_ver else (None, {})
+        return _compute_forecast(lat, lon, model_ids)
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _compute_forecast(lat, lon, model_ids):
+    jp = core.is_japan(lat, lon)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_fc = ex.submit(cached_forecasts, lat, lon, model_ids)
+        f_ens = ex.submit(cached_ensemble, lat, lon)
+        f_pop = ex.submit(cached_jma_pop, lat, lon) if jp else None
+        f_ver = ex.submit(cached_verification, lat, lon, model_ids) if jp else None
+        fc, utc_off, elevation = f_fc.result()
+        ens, ens_groups = f_ens.result()
+        jma_pop, jma_area = f_pop.result() if f_pop else ([], None)
+        station, verif = f_ver.result() if f_ver else (None, {})
     if fc is None or fc.empty:
         return None
     now = core.now_local(utc_off)
@@ -371,6 +375,12 @@ if not selected_models:
     st.stop()
 
 if forecast_btn and lat:
+    st.session_state.loc = {"lat": lat, "lon": lon, "name": course_name, "address": address}
+    st.session_state.pop("day_table", None)
+
+if st.session_state.get("loc"):
+    loc = st.session_state.loc
+    lat, lon, course_name, address = loc["lat"], loc["lon"], loc["name"], loc["address"]
     st.success(f"📍 **{course_name}**  |  {address}  |  緯度 {lat:.4f} / 経度 {lon:.4f}")
 
     try:
@@ -439,9 +449,7 @@ if forecast_btn and lat:
             + (f"＋気象庁の降水確率（{result['jma_area']}）" if result["jma_area"] else "")
         )
 
-    tabs = st.tabs(["📅 今日", "📅 明日", "📅 明後日", "📆 3〜7日先", "📆 8〜14日先", "📊 全期間グラフ"])
-
-    def render_day_detail(df_day, title, key_suffix=""):
+    def render_day_detail(df_day, title, key_suffix="", show_night=False):
         if df_day.empty:
             st.info("データなし")
             return
@@ -472,6 +480,8 @@ if forecast_btn and lat:
 
         # 1時間ごとテーブル
         display_df = df_day.copy()
+        if not show_night:
+            display_df = display_df[(display_df["time"].dt.hour >= 5) & (display_df["time"].dt.hour <= 19)]
         display_df["時刻"] = display_df["time"].dt.strftime("%H:%M")
         display_df["天気"] = display_df["weathercode"].astype(float).apply(get_weather_code_label)
         display_df["気温"] = display_df["temperature_2m"].round(1).apply(lambda v: f"{v}℃")
@@ -554,42 +564,58 @@ if forecast_btn and lat:
 
     WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 
-    for i in range(3):
-        with tabs[i]:
-            target_date = today + timedelta(days=i)
-            day_df = ensemble_df[ensemble_df["time"].dt.date == target_date]
-            label = ["今日", "明日", "明後日"][i]
-            dow = WEEKDAYS[target_date.weekday()]
-            render_day_detail(day_df, f"{label} ({target_date.strftime('%m/%d')}・{dow})")
+    # --- 14日間の一覧（1日1行・プレー時間帯 6〜17時で評価） ---
+    def day_label(d):
+        return f"{d.month}/{d.day}({WEEKDAYS[d.weekday()]})"
 
-    with tabs[3]:
-        # 3〜7日先
-        start = today + timedelta(days=3)
-        end = today + timedelta(days=7)
-        future_df = ensemble_df[(ensemble_df["time"].dt.date >= start) & (ensemble_df["time"].dt.date <= end)]
-        for date in sorted(future_df["time"].dt.date.unique()):
-            day_df = future_df[future_df["time"].dt.date == date]
-            dow = WEEKDAYS[date.weekday()]
-            render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w1_{date}")
-            st.divider()
+    def score_mark(v):
+        return "🟢" if v >= 80 else "🟡" if v >= 60 else "🟠" if v >= 40 else "🔴"
 
-    with tabs[4]:
-        # 8〜14日先
-        start = today + timedelta(days=8)
-        future_df = ensemble_df[ensemble_df["time"].dt.date >= start]
-        if future_df.empty:
-            st.info("8日以降のデータがまだ取得できていません。")
-        else:
-            st.caption("⚠️ 8日以上先は予報の当たりやすさが大きく下がります。傾向（雨が多そうか・寒そうか）の目安にしてください。")
-            for date in sorted(future_df["time"].dt.date.unique()):
-                day_df = future_df[future_df["time"].dt.date == date]
-                dow = WEEKDAYS[date.weekday()]
-                render_day_detail(day_df, f"{date.month}月{date.day}日（{dow}）", key_suffix=f"_w2_{date}")
-                st.divider()
+    scored = ensemble_df
+    days = []
+    for d, g in scored.groupby(scored["time"].dt.date):
+        play = g[(g["time"].dt.hour >= 6) & (g["time"].dt.hour <= 17)]
+        if play.empty:
+            continue
+        lead = (d - today).days
+        score = core.day_score(play)
+        # 天気: 雨が濃い時間があればその時間、なければ日中に多い天気
+        wet = play[play["rain_prob"] >= 0.5]
+        code = wet.loc[wet["rain_prob"].idxmax(), "weathercode"] if not wet.empty else play["weathercode"].mode().iloc[0]
+        gust = play["windgusts_10m"].max()
+        days.append({
+            "date": d,
+            "日付": ("今日 " if lead == 0 else "明日 " if lead == 1 else "") + day_label(d),
+            "天気": get_weather_code_label(float(code)),
+            "スコア": f"{score_mark(score)} {score}" if lead < 7 else f"{score_mark(score)} ({score})",
+            "雨の可能性": f"{play['precipitation_probability'].max():.0f}%",
+            "最大風速": f"{play['windspeed_10m'].max():.0f}m/s" + (f"（瞬間{gust:.0f}）" if not np.isnan(gust) else ""),
+            "気温": f"{play['temperature_2m'].min():.0f}〜{play['temperature_2m'].max():.0f}℃",
+        })
+    overview = pd.DataFrame(days)
+
+    st.markdown("### 📅 14日間の予報（プレー時間帯 6〜17時）")
+    st.caption("行を選ぶと、その日の1時間ごとの予報が下に出ます。スコアは風・気温から、雨に当たりそうな時間の分を差し引いた点。7日以上先は（）付き＝当たりにくいので目安です。")
+    sel = st.dataframe(
+        overview.drop(columns=["date"]),
+        hide_index=True, width="stretch",
+        on_select="rerun", selection_mode="single-row", key="day_table",
+        height=min(36 * (len(overview) + 1) + 4, 560),
+    )
+    picked = sel.selection.rows[0] if sel and sel.selection.rows else 0
+    target = overview.iloc[picked]["date"]
+    lead = (target - today).days
+
+    st.divider()
+    show_night = st.toggle("夜の時間帯も表示", value=False, key="show_night")
+    title = overview.iloc[picked]["日付"]
+    if lead >= 7:
+        st.caption("⚠️ 7日以上先は予報の当たりやすさが大きく下がります。傾向（雨が多そうか・寒そうか）の目安にしてください。")
+    render_day_detail(ensemble_df[ensemble_df["time"].dt.date == target], title,
+                      key_suffix=f"_{target}", show_night=show_night)
 
     # --- 全期間グラフ ---
-    with tabs[5]:
-        st.markdown("### 14日間 1時間ごと推移グラフ")
+    with st.expander("📊 14日間の推移グラフ（気温・雨・風）"):
 
         fig = make_subplots(
             rows=3, cols=1,
